@@ -13,6 +13,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// BackendConfig holds per-provider LLM settings.
+type BackendConfig struct {
+	Model    string `yaml:"model"`
+	URL      string `yaml:"url"`
+	TokenEnv string `yaml:"token_env,omitempty"`
+	TokenCmd string `yaml:"token_cmd,omitempty"`
+}
+
 // Config holds all shared settings used by both generate and review commands.
 type Config struct {
 	// Repo is the GitHub "owner/repo" string.
@@ -28,6 +36,11 @@ type Config struct {
 	MinCommentLen int `yaml:"min_comment_len"`
 	// RateDelay is the delay between processing PRs.
 	RateDelay Duration `yaml:"rate_delay"`
+
+	// Backend selects which LLM backend to use (e.g. "github", "gemini", "ollama").
+	Backend string `yaml:"backend,omitempty"`
+	// Backends holds configuration for each individual LLM provider.
+	Backends map[string]BackendConfig `yaml:"backends,omitempty"`
 }
 
 // Duration wraps time.Duration for YAML marshaling as a human-readable string.
@@ -56,6 +69,25 @@ func Default() Config {
 		BaseBranch:    "master",
 		MinCommentLen: 10,
 		RateDelay:     Duration(1 * time.Second),
+		Backend:       "github",
+		Backends: map[string]BackendConfig{
+			"github": {
+				Model:    "gpt-4o-mini",
+				URL:      "https://models.inference.ai.azure.com/chat/completions",
+				TokenEnv: "GITHUB_TOKEN",
+				TokenCmd: "gh auth token",
+			},
+			"gemini": {
+				Model:    "gemini-2.0-flash",
+				URL:      "https://generativelanguage.googleapis.com/v1beta",
+				TokenEnv: "GEMINI_API_KEY",
+				TokenCmd: "gcloud auth print-access-token",
+			},
+			"ollama": {
+				Model: "llama3",
+				URL:   "http://localhost:11434/v1/chat/completions",
+			},
+		},
 	}
 }
 
@@ -85,6 +117,41 @@ func Load(ragrevDir string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parsing config %s: %w", p, err)
 	}
+
+	// Merge back missing default backends or backend properties
+	defaults := Default()
+	if cfg.Backends == nil {
+		cfg.Backends = make(map[string]BackendConfig)
+	}
+	for name, defaultBackend := range defaults.Backends {
+		if existing, ok := cfg.Backends[name]; !ok {
+			// Entire backend is missing, copy default
+			cfg.Backends[name] = defaultBackend
+		} else {
+			// Backend exists, merge missing properties
+			changed := false
+			if existing.Model == "" {
+				existing.Model = defaultBackend.Model
+				changed = true
+			}
+			if existing.URL == "" {
+				existing.URL = defaultBackend.URL
+				changed = true
+			}
+			if existing.TokenEnv == "" {
+				existing.TokenEnv = defaultBackend.TokenEnv
+				changed = true
+			}
+			if existing.TokenCmd == "" {
+				existing.TokenCmd = defaultBackend.TokenCmd
+				changed = true
+			}
+			if changed {
+				cfg.Backends[name] = existing
+			}
+		}
+	}
+
 	return cfg, nil
 }
 

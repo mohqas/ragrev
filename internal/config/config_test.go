@@ -28,6 +28,15 @@ func TestSaveAndLoad(t *testing.T) {
 	cfg.Authors = []string{"alice", "bob"}
 	cfg.BaseBranch = "main"
 	cfg.MinCommentLen = 15
+	cfg.Backend = "gemini"
+	cfg.Backends = map[string]BackendConfig{
+		"gemini": {
+			Model:    "gemini-2",
+			URL:      "http://example.com/gemini",
+			TokenEnv: "MY_GEMINI_TOKEN",
+			TokenCmd: "echo test",
+		},
+	}
 
 	if err := Save(dir, cfg); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -62,6 +71,12 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if time.Duration(loaded.RateDelay) != 1*time.Second {
 		t.Errorf("RateDelay = %v, want 1s", time.Duration(loaded.RateDelay))
+	}
+	if loaded.Backend != "gemini" {
+		t.Errorf("Backend = %q, want gemini", loaded.Backend)
+	}
+	if loaded.Backends["gemini"].Model != "gemini-2" {
+		t.Errorf("Backend Model = %q, want gemini-2", loaded.Backends["gemini"].Model)
 	}
 }
 
@@ -126,4 +141,3 @@ func TestDurationYAML(t *testing.T) {
 		t.Errorf("RateDelay = %v, want 2.5s", time.Duration(loaded.RateDelay))
 	}
 }
-

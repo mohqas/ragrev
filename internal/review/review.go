@@ -2,27 +2,18 @@
 package review
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/mohqas/ragrev/internal/config"
 	ghclient "github.com/mohqas/ragrev/internal/github"
 	"github.com/mohqas/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/llm"
 	"github.com/mohqas/ragrev/internal/vectordb"
-)
-
-const (
-	githubModelsURL = "https://models.inference.ai.azure.com/chat/completions"
-	reviewModel     = "o4-mini"
 )
 
 // Params holds parameters for the review command.
@@ -34,22 +25,6 @@ type Params struct {
 	UseAgentsOverrides bool
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-}
-
-type chatResponse struct {
-	Choices []struct {
-		Message chatMessage `json:"message"`
-	} `json:"choices"`
-}
-
 // Run executes the review for a specific PR.
 func Run(ctx context.Context, params Params, w io.Writer) error {
 	cfg := params.Config
@@ -58,10 +33,19 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		return fmt.Errorf("repo is required")
 	}
 
-	// 1. Get Github Token
-	token, err := ghclient.Token()
+	backendName := cfg.Backend
+	if backendName == "" {
+		backendName = "github"
+	}
+
+	backendCfg, ok := cfg.Backends[backendName]
+	if !ok {
+		return fmt.Errorf("backend %q not found in config", backendName)
+	}
+
+	provider, err := llm.NewProvider(backendName, backendCfg, w)
 	if err != nil {
-		return fmt.Errorf("fetching github token (needed for API and Review Models): %w", err)
+		return fmt.Errorf("initializing LLM provider: %w", err)
 	}
 
 	// 2. Open DB
@@ -101,7 +85,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 			return fmt.Errorf("querying vector db for file %s: %w", f.Filename, err)
 		}
 
-		var pastReviewMessages []chatMessage
+		var pastReviewMessages []llm.Message
 
 		// Build examples from high confidence DB results.
 		for _, r := range results {
@@ -123,7 +107,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 					}
 					msg += fmt.Sprintf("): %s", c.Body)
 
-					pastReviewMessages = append(pastReviewMessages, chatMessage{
+					pastReviewMessages = append(pastReviewMessages, llm.Message{
 						Role:    "assistant",
 						Content: msg,
 					})
@@ -135,14 +119,48 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		var agentsMsg string
 		if params.UseAgentsOverrides {
 			if topLvl, err := gitutil.TopLevelDir(); err == nil {
-				agentsPath := filepath.Join(topLvl, "AGENTS.md")
-				if data, err := os.ReadFile(agentsPath); err == nil {
-					agentsMsg = string(data)
+				var dirsToCheck []string
+				dirsToCheck = append(dirsToCheck, topLvl)
+
+				dir := filepath.Dir(f.Filename)
+				currentDir := topLvl
+				if dir != "." && dir != "" {
+					parts := strings.Split(filepath.ToSlash(dir), "/")
+					for _, part := range parts {
+						if part == "" {
+							continue
+						}
+						currentDir = filepath.Join(currentDir, part)
+						dirsToCheck = append(dirsToCheck, currentDir)
+					}
+				}
+
+				var agentFilesContext []string
+				seenFiles := make(map[string]bool)
+
+				for _, d := range dirsToCheck {
+					p1 := filepath.Join(d, "AGENTS.md")
+					p2 := filepath.Join(d, "kb", "AGENTS.md")
+
+					for _, p := range []string{p1, p2} {
+						if seenFiles[p] {
+							continue
+						}
+						seenFiles[p] = true
+						if data, err := os.ReadFile(p); err == nil {
+							rel, _ := filepath.Rel(topLvl, p)
+							agentFilesContext = append(agentFilesContext, fmt.Sprintf("--- %s ---\n%s", rel, string(data)))
+						}
+					}
+				}
+
+				if len(agentFilesContext) > 0 {
+					agentsMsg = strings.Join(agentFilesContext, "\n\n")
 				}
 			}
 		}
 
-		sysMsg := chatMessage{
+		sysMsg := llm.Message{
 			Role: "system",
 			Content: "You are a senior code reviewer acting as the repository code owner. " +
 				"You will be given a unified diff where lines starting with '+' are additions " +
@@ -160,23 +178,23 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
 		}
 
-		userMsg := chatMessage{
+		userMsg := llm.Message{
 			Role:    "user",
 			Content: fmt.Sprintf("Review the following diff for `%s`:\n\n```diff\n%s\n```", f.Filename, f.Patch),
 		}
 
-		messages := []chatMessage{sysMsg}
+		messages := []llm.Message{sysMsg}
 		messages = append(messages, pastReviewMessages...)
 		messages = append(messages, userMsg)
 
-		reqBody := chatRequest{
-			Model:    reviewModel,
-			Messages: messages,
-		}
-
 		fmt.Fprintf(w, "Generating review for %s...\n", f.Filename)
-		reviewText, err := callGitHubModels(ctx, reqBody, token, w)
+		reviewText, err := provider.Complete(ctx, messages)
 		if err != nil {
+			if strings.Contains(err.Error(), "tokens_limit_reached") {
+				fmt.Fprintf(w, "  -> Skipping large file %s: prompt exceeded model token limit.\n\n", f.Filename)
+				reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n_Skipped context window limit exceeded. File too large for model._", f.Filename))
+				continue
+			}
 			return fmt.Errorf("calling GitHub models for %s: %w", f.Filename, err)
 		}
 
@@ -193,93 +211,3 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 
 	return nil
 }
-
-func callGitHubModels(ctx context.Context, reqBody chatRequest, token string, w io.Writer) (string, error) {
-	b, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-
-	maxRetries := 5
-	backoff := 22 * time.Second // starting with 22s since the limit is 3 per 60s
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", githubModelsURL, bytes.NewReader(b))
-		if err != nil {
-			return "", err
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		// GitHub Models API accepts standard GitHub tokens. Note it expects a Bearer token or api-key.
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return "", err
-		}
-
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-			resp.Body.Close()
-			if attempt == maxRetries {
-				return "", fmt.Errorf("github models API error: rate limit exceeded after %d retries", maxRetries)
-			}
-			delay := backoff
-			if headerVal := resp.Header.Get("Retry-After"); headerVal != "" {
-				var waitSecs int
-				if _, err := fmt.Sscanf(headerVal, "%d", &waitSecs); err == nil && waitSecs > 0 {
-					delay = time.Duration(waitSecs) * time.Second
-				}
-			}
-			delay += time.Duration(rand.Float64() * float64(time.Second))
-			fmt.Fprintf(w, "  Rate limit reached (429). Retrying in %v...\n", delay.Round(time.Second))
-			select {
-			case <-time.After(delay):
-				backoff *= 2
-				continue
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			// Azure / GitHub models sometimes return RateLimitReached as a 400 or 403 or embed it in JSON
-			if strings.Contains(string(body), "RateLimitReached") && attempt < maxRetries {
-				delay := backoff
-				// Try to extract the number of seconds if the message explicitly says it
-				var waitSecs int
-				if _, err := fmt.Sscanf(string(body), "Please wait %d seconds", &waitSecs); err == nil && waitSecs > 0 {
-					delay = time.Duration(waitSecs) * time.Second
-				}
-				delay += time.Duration(rand.Float64() * float64(time.Second))
-				fmt.Fprintf(w, "  Rate limit reached (RateLimitReached). Retrying in %v...\n", delay.Round(time.Second))
-				select {
-				case <-time.After(delay):
-					backoff *= 2
-					continue
-				case <-ctx.Done():
-					return "", ctx.Err()
-				}
-			}
-
-			return "", fmt.Errorf("github models API error (status %d): %s", resp.StatusCode, string(body))
-		}
-
-		var res chatResponse
-		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-			resp.Body.Close()
-			return "", err
-		}
-		resp.Body.Close()
-
-		if len(res.Choices) == 0 {
-			return "", fmt.Errorf("no response choices returned")
-		}
-		return res.Choices[0].Message.Content, nil
-	}
-
-	return "", fmt.Errorf("max retries exceeded without a valid response from Github Models")
-}
-

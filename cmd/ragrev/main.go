@@ -202,6 +202,7 @@ func runReview(args []string) error {
 		flagDBPath     string
 		flagCollection string
 		flagAgents     bool
+		flagBackend    string
 	)
 
 	fs.StringVar(&flagDBPath, "db-path", "", "Path to the vector store directory (default: .git/ragrev)")
@@ -209,6 +210,7 @@ func runReview(args []string) error {
 	fs.StringVar(&flagRepo, "repo", "", "GitHub repository owner/repo (override config)")
 	fs.StringVar(&flagReviewers, "reviewers", "", "Comma-separated reviewer usernames to base the review on (override config)")
 	fs.BoolVar(&flagAgents, "use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
+	fs.StringVar(&flagBackend, "backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
 
 	// Parse PR number from args[0] and flags from args[1:]
 	// Handle case where flags appear before PR number or after
@@ -257,6 +259,9 @@ func runReview(args []string) error {
 			reviewers[i] = strings.TrimSpace(reviewers[i])
 		}
 		cfg.Reviewers = reviewers
+	}
+	if flagBackend != "" {
+		cfg.Backend = flagBackend
 	}
 
 	// Resolve DB path and collection
