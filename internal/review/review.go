@@ -233,7 +233,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			log.Verbose("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
 
 			cleanedReview := strings.TrimSpace(chunkReview)
-			if cleanedReview != "LGTM_NO_ISSUES" {
+			if !strings.Contains(cleanedReview, "LGTM_NO_ISSUES") {
 				fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n%s", chunk.Name, cleanedReview))
 
 				if params.Submit {
