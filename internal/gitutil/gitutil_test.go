@@ -56,4 +56,3 @@ func TestDBPath(t *testing.T) {
 		t.Error("DBPath returned empty string")
 	}
 }
-

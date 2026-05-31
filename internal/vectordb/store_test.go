@@ -341,7 +341,7 @@ func TestStorePersistenceAndSimilarity(t *testing.T) {
 	}
 
 	// For a query with no overlapping tokens with the test documents, TF-IDF cosine similarity should be 0.
-	// Because chromem-go might shift the range or we have an all-zero vector, we just check it is 
+	// Because chromem-go might shift the range or we have an all-zero vector, we just check it is
 	// significantly lower than the exact match.
 	if len(resNoMatch) > 0 {
 		// Exact match should have score very close to 1. No match should have 0 or at least < 0.5

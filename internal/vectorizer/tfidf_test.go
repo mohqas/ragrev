@@ -13,7 +13,7 @@ func TestTokenize(t *testing.T) {
 	}{
 		{"simple", "hello world", 2},
 		{"diff line", "+func main() {", 2}, // "func", "main"
-		{"removal line", "-old_func()", 1},  // "old_func" (underscore preserved)
+		{"removal line", "-old_func()", 1}, // "old_func" (underscore preserved)
 		{"empty", "", 0},
 		{"short tokens filtered", "a b c", 0}, // all < 2 chars
 	}
@@ -117,5 +117,3 @@ func TestVectorize_EmptyDoc(t *testing.T) {
 		}
 	}
 }
-
-

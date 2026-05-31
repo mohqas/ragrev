@@ -138,4 +138,3 @@ func CosineSimilarity(a, b []float32) float32 {
 	}
 	return float32(dot / denom)
 }
-

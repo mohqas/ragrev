@@ -211,7 +211,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			messages := []llm.Message{sysMsg}
 			messages = append(messages, pastReviewMessages...)
 
-
 			userMsg := llm.Message{
 				Role:    "user",
 				Content: fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch),
@@ -247,10 +246,10 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 					commentBody := cleanedReview
 
 					draftComments = append(draftComments, &gh.DraftReviewComment{
-						Path:   &filenamePath,
-						Line:   &commentLine,
-						Side:   &side,
-						Body:   &commentBody,
+						Path: &filenamePath,
+						Line: &commentLine,
+						Side: &side,
+						Body: &commentBody,
 					})
 				}
 			}

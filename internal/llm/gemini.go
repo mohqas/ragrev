@@ -24,8 +24,8 @@ type geminiContent struct {
 }
 
 type geminiRequest struct {
-	Contents     []geminiContent `json:"contents"`
-	SystemInstruction *geminiContent `json:"systemInstruction,omitempty"`
+	Contents          []geminiContent `json:"contents"`
+	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
 }
 
 type geminiResponse struct {
@@ -64,14 +64,14 @@ func (c *geminiClient) Complete(ctx context.Context, messages []Message) (string
 
 		if role == "system" {
 			reqBody.SystemInstruction = &geminiContent{
-				Role: "system",
+				Role:  "system",
 				Parts: []geminiPart{{Text: m.Content}},
 			}
 			continue
 		}
 
 		reqBody.Contents = append(reqBody.Contents, geminiContent{
-			Role: role,
+			Role:  role,
 			Parts: []geminiPart{{Text: m.Content}},
 		})
 	}
