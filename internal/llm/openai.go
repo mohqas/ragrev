@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 type chatRequest struct {
@@ -27,15 +29,15 @@ type openaiClient struct {
 	url   string
 	model string
 	token string
-	w     io.Writer
+	log   *logger.Logger
 }
 
-func newOpenAIClient(url, model, token string, w io.Writer) *openaiClient {
+func newOpenAIClient(url, model, token string, log *logger.Logger) *openaiClient {
 	return &openaiClient{
 		url:   url,
 		model: model,
 		token: token,
-		w:     w,
+		log:   log,
 	}
 }
 
@@ -82,7 +84,7 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 				}
 			}
 			delay += time.Duration(rand.Float64() * float64(time.Second))
-			fmt.Fprintf(c.w, "  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
+			c.log.Debug("  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
 			select {
 			case <-time.After(delay):
 				backoff *= 2
@@ -103,7 +105,7 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 					delay = time.Duration(waitSecs) * time.Second
 				}
 				delay += time.Duration(rand.Float64() * float64(time.Second))
-				fmt.Fprintf(c.w, "  Rate limit reached. Retrying in %v...\n", delay.Round(time.Second))
+				c.log.Debug("  Rate limit reached. Retrying in %v...\n", delay.Round(time.Second))
 				select {
 				case <-time.After(delay):
 					backoff *= 2
@@ -135,4 +137,3 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 
 	return "", fmt.Errorf("max retries exceeded without a valid response")
 }
-

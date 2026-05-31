@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 type geminiPart struct {
@@ -38,15 +40,15 @@ type geminiClient struct {
 	url   string
 	model string
 	token string
-	w     io.Writer
+	log   *logger.Logger
 }
 
-func newGeminiClient(url, model, token string, w io.Writer) *geminiClient {
+func newGeminiClient(url, model, token string, log *logger.Logger) *geminiClient {
 	return &geminiClient{
 		url:   url,
 		model: model,
 		token: token,
-		w:     w,
+		log:   log,
 	}
 }
 
@@ -114,7 +116,7 @@ func (c *geminiClient) Complete(ctx context.Context, messages []Message) (string
 			}
 			delay := backoff
 			delay += time.Duration(rand.Float64() * float64(time.Second))
-			fmt.Fprintf(c.w, "  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
+			c.log.Debug("  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
 			select {
 			case <-time.After(delay):
 				backoff *= 2

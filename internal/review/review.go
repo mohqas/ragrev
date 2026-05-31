@@ -4,7 +4,6 @@ package review
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	ghclient "github.com/mohqas/ragrev/internal/github"
 	"github.com/mohqas/ragrev/internal/gitutil"
 	"github.com/mohqas/ragrev/internal/llm"
+	"github.com/mohqas/ragrev/internal/logger"
 	"github.com/mohqas/ragrev/internal/vectordb"
 )
 
@@ -26,7 +26,7 @@ type Params struct {
 }
 
 // Run executes the review for a specific PR.
-func Run(ctx context.Context, params Params, w io.Writer) error {
+func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	cfg := params.Config
 
 	if cfg.Repo == "" {
@@ -43,7 +43,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		return fmt.Errorf("backend %q not found in config", backendName)
 	}
 
-	provider, err := llm.NewProvider(backendName, backendCfg, w)
+	provider, err := llm.NewProvider(backendName, backendCfg, log)
 	if err != nil {
 		return fmt.Errorf("initializing LLM provider: %w", err)
 	}
@@ -66,7 +66,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		return fmt.Errorf("setting repo: %w", err)
 	}
 
-	fmt.Fprintf(w, "Fetching files for PR #%d from %s...\n", params.PRNumber, client.RepoFullName())
+	log.Print("Fetching files for PR #%d from %s...\n", params.PRNumber, client.RepoFullName())
 	files, err := client.ListPRFiles(params.PRNumber)
 	if err != nil {
 		return fmt.Errorf("fetching PR files: %w", err)
@@ -187,11 +187,11 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		messages = append(messages, pastReviewMessages...)
 		messages = append(messages, userMsg)
 
-		fmt.Fprintf(w, "Generating review for %s...\n", f.Filename)
+		log.Print("Generating review for %s...\n", f.Filename)
 		reviewText, err := provider.Complete(ctx, messages)
 		if err != nil {
 			if strings.Contains(err.Error(), "tokens_limit_reached") {
-				fmt.Fprintf(w, "  -> Skipping large file %s: prompt exceeded model token limit.\n\n", f.Filename)
+				log.Verbose("  -> Skipping large file %s: prompt exceeded model token limit.\n\n", f.Filename)
 				reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n_Skipped context window limit exceeded. File too large for model._", f.Filename))
 				continue
 			}
@@ -199,14 +199,14 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		}
 
 		reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n%s", f.Filename, reviewText))
-		fmt.Fprintf(w, "--- Review for %s ---\n%s\n\n", f.Filename, reviewText)
+		log.Verbose("--- Review for %s ---\n%s\n\n", f.Filename, reviewText)
 	}
 
 	if len(reviewParts) > 0 {
-		fmt.Fprintf(w, "\n--- Full Review ---\n\n")
-		fmt.Fprintf(w, "%s\n", strings.Join(reviewParts, "\n\n---\n\n"))
+		log.Print("\n--- Full Review ---\n\n")
+		log.Print("%s\n", strings.Join(reviewParts, "\n\n---\n\n"))
 	} else {
-		fmt.Fprintf(w, "No reviewable files found.\n")
+		log.Print("No reviewable files found.\n")
 	}
 
 	return nil

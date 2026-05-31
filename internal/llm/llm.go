@@ -4,12 +4,12 @@ package llm
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 // Message is the universal minimum block needed to communicate with an LLM.
@@ -24,7 +24,7 @@ type Provider interface {
 }
 
 // NewProvider returns a Provider implementation configured per backendCfg.
-func NewProvider(name string, backendCfg config.BackendConfig, w io.Writer) (Provider, error) {
+func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logger) (Provider, error) {
 	var token string
 
 	// Token resolution
@@ -48,20 +48,19 @@ func NewProvider(name string, backendCfg config.BackendConfig, w io.Writer) (Pro
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
 		// GitHub expects "Bearer <token>" but OpenAI Client can just prepend Bearer if it's not empty
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, w), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, log), nil
 
 	case "ollama":
 		// Ollama is an OpenAI-compatible API without auth.
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", w), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", log), nil
 
 	case "gemini":
 		if token == "" {
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
-		return newGeminiClient(backendCfg.URL, backendCfg.Model, token, w), nil
+		return newGeminiClient(backendCfg.URL, backendCfg.Model, token, log), nil
 
 	default:
 		return nil, fmt.Errorf("unknown LLM backend provider: %s", name)
 	}
 }
-

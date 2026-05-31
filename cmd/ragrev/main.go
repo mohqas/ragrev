@@ -11,6 +11,7 @@ import (
 	"github.com/mohqas/ragrev/internal/config"
 	"github.com/mohqas/ragrev/internal/generate"
 	"github.com/mohqas/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/logger"
 	"github.com/mohqas/ragrev/internal/review"
 )
 
@@ -130,6 +131,8 @@ func runGenerate(args []string) error {
 		flagRateDelay  time.Duration
 		flagDBPath     string
 		flagCollection string
+		flagVerbose    bool
+		flagDebug      bool
 	)
 
 	fs.StringVar(&flagDBPath, "db-path", "", "Path to the vector store directory (default: .git/ragrev)")
@@ -139,6 +142,8 @@ func runGenerate(args []string) error {
 	fs.StringVar(&flagAuthors, "authors", "", "Comma-separated trusted author usernames (override config)")
 	fs.IntVar(&flagMinLen, "min-comment-len", 0, "Minimum comment body length (override config)")
 	fs.DurationVar(&flagRateDelay, "rate-delay", 0, "Delay between PR processing (override config)")
+	fs.BoolVar(&flagVerbose, "v", false, "Enable verbose output")
+	fs.BoolVar(&flagDebug, "debug", false, "Enable debug output (implies -v)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -187,10 +192,12 @@ func runGenerate(args []string) error {
 		Config:         cfg,
 	}
 
+	log := logger.New(os.Stderr, flagVerbose, flagDebug)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	return generate.Run(ctx, params, os.Stderr)
+	return generate.Run(ctx, params, log)
 }
 
 func runReview(args []string) error {
@@ -203,6 +210,8 @@ func runReview(args []string) error {
 		flagCollection string
 		flagAgents     bool
 		flagBackend    string
+		flagVerbose    bool
+		flagDebug      bool
 	)
 
 	fs.StringVar(&flagDBPath, "db-path", "", "Path to the vector store directory (default: .git/ragrev)")
@@ -211,6 +220,8 @@ func runReview(args []string) error {
 	fs.StringVar(&flagReviewers, "reviewers", "", "Comma-separated reviewer usernames to base the review on (override config)")
 	fs.BoolVar(&flagAgents, "use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	fs.StringVar(&flagBackend, "backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
+	fs.BoolVar(&flagVerbose, "v", false, "Enable verbose output")
+	fs.BoolVar(&flagDebug, "debug", false, "Enable debug output (implies -v)")
 
 	// Parse PR number from args[0] and flags from args[1:]
 	// Handle case where flags appear before PR number or after
@@ -282,8 +293,10 @@ func runReview(args []string) error {
 		UseAgentsOverrides: flagAgents,
 	}
 
+	log := logger.New(os.Stdout, flagVerbose, flagDebug)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	return review.Run(ctx, params, os.Stdout)
+	return review.Run(ctx, params, log)
 }

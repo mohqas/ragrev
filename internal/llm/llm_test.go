@@ -1,12 +1,16 @@
 package llm
 
 import (
-	"bytes"
 	"os"
 	"testing"
 
 	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/logger"
 )
+
+func testLogger() *logger.Logger {
+	return logger.New(os.Stderr, false, false)
+}
 
 func TestNewProvider_TokenEnv(t *testing.T) {
 	os.Setenv("TEST_TOKEN_ENV", "env_secret")
@@ -19,7 +23,7 @@ func TestNewProvider_TokenEnv(t *testing.T) {
 		TokenCmd: "echo cmd_secret",
 	}
 
-	p, err := NewProvider("github", cfg, &bytes.Buffer{})
+	p, err := NewProvider("github", cfg, testLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,6 +35,10 @@ func TestNewProvider_TokenEnv(t *testing.T) {
 
 	if c.token != "env_secret" {
 		t.Errorf("token = %q, want env_secret", c.token)
+	}
+
+	if c.log == nil {
+		t.Fatalf("expected logger to be set")
 	}
 }
 
@@ -45,7 +53,7 @@ func TestNewProvider_TokenCmd(t *testing.T) {
 		TokenCmd: "echo cmd_secret",
 	}
 
-	p, err := NewProvider("github", cfg, &bytes.Buffer{})
+	p, err := NewProvider("github", cfg, testLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,6 +66,10 @@ func TestNewProvider_TokenCmd(t *testing.T) {
 	if c.token != "cmd_secret" {
 		t.Errorf("token = %q, want cmd_secret", c.token)
 	}
+
+	if c.log == nil {
+		t.Fatalf("expected logger to be set")
+	}
 }
 
 func TestNewProvider_OllamaNoAuth(t *testing.T) {
@@ -66,7 +78,7 @@ func TestNewProvider_OllamaNoAuth(t *testing.T) {
 		URL:   "http://localhost",
 	}
 
-	p, err := NewProvider("ollama", cfg, &bytes.Buffer{})
+	p, err := NewProvider("ollama", cfg, testLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,4 +92,3 @@ func TestNewProvider_OllamaNoAuth(t *testing.T) {
 		t.Errorf("token = %q, want empty", c.token)
 	}
 }
-

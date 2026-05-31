@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/mohqas/ragrev/internal/config"
 	ghclient "github.com/mohqas/ragrev/internal/github"
+	"github.com/mohqas/ragrev/internal/logger"
 	"github.com/mohqas/ragrev/internal/vectordb"
 )
 
@@ -29,8 +29,8 @@ type Params struct {
 }
 
 // Run executes the knowledge base generation.
-// Progress is written to w.
-func Run(ctx context.Context, params Params, w io.Writer) error {
+// Progress is written via log.
+func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	cfg := params.Config
 
 	if cfg.Repo == "" {
@@ -43,7 +43,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		return fmt.Errorf("opening vector store: %w", err)
 	}
 
-	fmt.Fprintf(w, "Existing documents in DB: %d\n", store.Count())
+	log.Print("Existing documents in DB: %d\n", store.Count())
 
 	// Connect to GitHub
 	client, err := ghclient.NewClient(ctx)
@@ -63,11 +63,11 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		}
 	}
 
-	fmt.Fprintf(w, "Scraping merged PRs from %s (base: %s)...\n", client.RepoFullName(), cfg.BaseBranch)
+	log.Print("Scraping merged PRs from %s (base: %s)...\n", client.RepoFullName(), cfg.BaseBranch)
 	if len(trusted) > 0 {
-		fmt.Fprintf(w, "Filtering by authors: %v\n", cfg.Authors)
+		log.Print("Filtering by authors: %v\n", cfg.Authors)
 	} else {
-		fmt.Fprintf(w, "Including comments from all authors\n")
+		log.Print("Including comments from all authors\n")
 	}
 
 	// Change to a permanent file name rather than temporary cache
@@ -90,7 +90,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 			}
 		}
 		if len(historicalThreads) > 0 {
-			fmt.Fprintf(w, "Loaded %d existing threads from local history file.\n", len(historicalThreads))
+			log.Verbose("Loaded %d existing threads from local history file.\n", len(historicalThreads))
 		}
 	}
 
@@ -99,7 +99,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		return fmt.Errorf("opening local history file: %w", err)
 	}
 
-	fmt.Fprintf(w, "\nStep 1: Scraping and appending NEW conversations to local history log...\n")
+	log.Print("\nStep 1: Scraping and appending NEW conversations to local history log...\n")
 
 	var newAddedCount int
 	err = client.ProcessReviewThreads(
@@ -126,7 +126,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 			}
 
 			if batchAdded > 0 {
-				fmt.Fprintf(w, "  Appended %d new threads to local history (example URL: %s)\n", batchAdded, threads[0].PRURL)
+				log.Verbose("  Appended %d new threads to local history (example URL: %s)\n", batchAdded, threads[0].PRURL)
 			}
 			return nil
 		},
@@ -138,11 +138,11 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 	threadsFile.Close() // done writing new data
 
 	if newAddedCount == 0 {
-		fmt.Fprintf(w, "Nothing new to add. DB is up to date.\n")
+		log.Print("Nothing new to add. DB is up to date.\n")
 		return nil
 	}
 
-	fmt.Fprintf(w, "\nStep 2: Rebuilding global TF-IDF vector vocabulary from ALL historical data...\n")
+	log.Print("\nStep 2: Rebuilding global TF-IDF vector vocabulary from ALL historical data...\n")
 	// Drop old collection mathematically so lengths are refreshed from scratch
 	if err := store.Reset(ctx); err != nil {
 		return fmt.Errorf("resetting vector store: %w", err)
@@ -153,7 +153,7 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 		idx.AddDocument(t.DiffHunk)
 	}
 
-	fmt.Fprintf(w, "Step 3: Vectorizing and inserting all data into freshly calibrated DB...\n")
+	log.Print("Step 3: Vectorizing and inserting all data into freshly calibrated DB...\n")
 	batchSize := 500
 	totalCommitted := 0
 
@@ -182,13 +182,13 @@ func Run(ctx context.Context, params Params, w io.Writer) error {
 			return fmt.Errorf("adding documents: %w", err)
 		}
 		totalCommitted += len(batch)
-		fmt.Fprintf(w, "  Committed %d/%d threads to Vector DB\n", totalCommitted, len(historicalThreads))
+		log.Verbose("  Committed %d/%d threads to Vector DB\n", totalCommitted, len(historicalThreads))
 	}
 
-	fmt.Fprintf(w, "\nSuccess! Knowledge base saved to %s\n", params.DBPath)
-	fmt.Fprintf(w, "Total documents in DB: %d\n", store.Count())
+	log.Print("\nSuccess! Knowledge base saved to %s\n", params.DBPath)
+	log.Print("Total documents in DB: %d\n", store.Count())
 	if len(cfg.Authors) > 0 {
-		fmt.Fprintf(w, "The reviewer will follow the style of: %v\n", cfg.Authors)
+		log.Print("The reviewer will follow the style of: %v\n", cfg.Authors)
 	}
 
 	return nil
