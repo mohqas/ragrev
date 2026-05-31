@@ -179,6 +179,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
 		}
 
+		fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
+		if err == nil && fullContent != "" {
+			sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
+		}
+
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
 		if p != nil {

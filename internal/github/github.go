@@ -170,6 +170,35 @@ func (c *Client) ListPRFiles(prNumber int) ([]PRFile, error) {
 	return files, nil
 }
 
+// GetPRHeadFileContent fetches the content of a file at the PR's head commit.
+func (c *Client) GetPRHeadFileContent(prNumber int, filename string) (string, error) {
+	if c.repo == nil {
+		return "", fmt.Errorf("repo not set; call SetRepo first")
+	}
+	owner := c.repo.GetOwner().GetLogin()
+	name := c.repo.GetName()
+
+	pr, _, err := c.api.PullRequests.Get(c.ctx, owner, name, prNumber)
+	if err != nil {
+		return "", fmt.Errorf("getting PR #%d info: %w", prNumber, err)
+	}
+
+	opts := &gh.RepositoryContentGetOptions{
+		Ref: pr.GetHead().GetSHA(),
+	}
+
+	fileContent, _, _, err := c.api.Repositories.GetContents(c.ctx, owner, name, filename, opts)
+	if err != nil {
+		return "", err
+	}
+
+	if fileContent == nil {
+		return "", fmt.Errorf("not a file")
+	}
+
+	return fileContent.GetContent()
+}
+
 // ProcessReviewThreads fetches conversation threads from merged PRs and calls
 // onBatch for each PR's threads.
 // trustedAuthors filters which comments to include (nil/empty = all).
