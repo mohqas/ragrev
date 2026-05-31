@@ -464,3 +464,20 @@ func readGHCLIToken() (string, error) {
 	}
 	return "", fmt.Errorf("no token found in gh hosts.yml; set GITHUB_TOKEN instead")
 }
+
+// CreatePendingReview creates a pending review on the PR with the given comments.
+func (c *Client) CreatePendingReview(prNumber int, comments []*gh.DraftReviewComment) error {
+	if len(comments) == 0 {
+		return nil
+	}
+	body := "ragrev automated review findings"
+	event := "PENDING"
+	req := &gh.PullRequestReviewRequest{
+		Body:     &body,
+		Event:    &event,
+		Comments: comments,
+	}
+
+	_, _, err := c.api.PullRequests.CreateReview(c.ctx, *c.repo.Owner.Login, *c.repo.Name, prNumber, req)
+	return err
+}

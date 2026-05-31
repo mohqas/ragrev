@@ -210,6 +210,7 @@ func runReview(args []string) error {
 		flagCollection string
 		flagAgents     bool
 		flagBackend    string
+		flagSubmit     bool
 		flagVerbose    bool
 		flagDebug      bool
 	)
@@ -220,6 +221,7 @@ func runReview(args []string) error {
 	fs.StringVar(&flagReviewers, "reviewers", "", "Comma-separated reviewer usernames to base the review on (override config)")
 	fs.BoolVar(&flagAgents, "use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	fs.StringVar(&flagBackend, "backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
+	fs.BoolVar(&flagSubmit, "submit", false, "Submit the review findings as a pending PR review on GitHub")
 	fs.BoolVar(&flagVerbose, "v", false, "Enable verbose output")
 	fs.BoolVar(&flagDebug, "debug", false, "Enable debug output (implies -v)")
 
@@ -291,6 +293,7 @@ func runReview(args []string) error {
 		PRNumber:           prNumber,
 		Config:             cfg,
 		UseAgentsOverrides: flagAgents,
+		Submit:             flagSubmit,
 	}
 
 	log := logger.New(os.Stdout, flagVerbose, flagDebug)

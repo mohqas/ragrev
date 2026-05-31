@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/mohqas/ragrev/internal/config"
 	ghclient "github.com/mohqas/ragrev/internal/github"
 	"github.com/mohqas/ragrev/internal/gitutil"
@@ -24,6 +25,7 @@ type Params struct {
 	PRNumber           int
 	Config             config.Config
 	UseAgentsOverrides bool
+	Submit             bool
 }
 
 // Run executes the review for a specific PR.
@@ -74,6 +76,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	}
 
 	var reviewParts []string
+	var draftComments []*gh.DraftReviewComment
 
 	for _, f := range files {
 		if f.Status == "removed" || len(strings.TrimSpace(f.Patch)) == 0 {
@@ -226,6 +229,24 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			cleanedReview := strings.TrimSpace(chunkReview)
 			if cleanedReview != "LGTM_NO_ISSUES" {
 				fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n%s", chunk.Name, cleanedReview))
+
+				if params.Submit {
+					commentLine := chunk.EndLine
+					if commentLine == 0 {
+						commentLine = 1
+					}
+					// Variables required for pointer fields
+					filenamePath := f.Filename
+					side := "RIGHT"
+					commentBody := cleanedReview
+
+					draftComments = append(draftComments, &gh.DraftReviewComment{
+						Path:   &filenamePath,
+						Line:   &commentLine,
+						Side:   &side,
+						Body:   &commentBody,
+					})
+				}
 			}
 		}
 
@@ -237,6 +258,14 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	if len(reviewParts) > 0 {
 		log.Print("\n--- Full Review ---\n\n")
 		log.Print("%s\n", strings.Join(reviewParts, "\n\n---\n\n"))
+
+		if params.Submit && len(draftComments) > 0 {
+			log.Print("Submitting pending review with %d comments...\n", len(draftComments))
+			if err := client.CreatePendingReview(params.PRNumber, draftComments); err != nil {
+				return fmt.Errorf("submitting review to GH: %w", err)
+			}
+			log.Print("Review submitted as PENDING.\n")
+		}
 	} else {
 		log.Print("No reviewable files found.\n")
 	}

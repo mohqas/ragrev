@@ -8,9 +8,10 @@ import (
 
 // Chunk represents a split portion of a file diff.
 type Chunk struct {
-	Name  string
-	Kind  string
-	Patch string
+	Name    string
+	Kind    string
+	Patch   string
+	EndLine int
 }
 
 // Parser defines the interface for language-specific diff splitters.
