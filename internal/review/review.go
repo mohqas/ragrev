@@ -83,42 +83,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			continue
 		}
 
-		// Retrieve relevant persona threads
-		results, err := store.QueryByAuthors(ctx, f.Patch, 4, cfg.Reviewers)
-		if err != nil {
-			return fmt.Errorf("querying vector db for file %s: %w", f.Filename, err)
-		}
-
-		var pastReviewMessages []llm.Message
-
-		// Build examples from high confidence DB results.
-		for _, r := range results {
-			if r.Score > 0.6 {
-				// Convert metadata string into an array of authors for this query
-				var authorFilter map[string]bool
-				if len(cfg.Reviewers) > 0 {
-					authorFilter = make(map[string]bool, len(cfg.Reviewers))
-					for _, rev := range cfg.Reviewers {
-						authorFilter[rev] = true
-					}
-				}
-
-				comments := vectordb.ExtractCommentsByAuthors(r.Metadata, authorFilter)
-				for _, c := range comments {
-					msg := fmt.Sprintf("Example past review comment on similar code (similarity %.2f", r.Score)
-					if url, ok := r.Metadata["url"]; ok && url != "" {
-						msg += fmt.Sprintf(", PR: %s", url)
-					}
-					msg += fmt.Sprintf("): %s", c.Body)
-
-					pastReviewMessages = append(pastReviewMessages, llm.Message{
-						Role:    "assistant",
-						Content: msg,
-					})
-				}
-			}
-		}
-
 		// Attempt to load AGENTS.md if flag is active
 		var agentsMsg string
 		if params.UseAgentsOverrides {
@@ -164,29 +128,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			}
 		}
 
-		sysMsg := llm.Message{
-			Role: "system",
-			Content: "You are a senior code reviewer acting as the repository code owner. " +
-				"You will be given chunks of a unified diff where lines starting with '+' are additions " +
-				"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
-				"for reference only \u2014 do not comment on them. " +
-				"Focus exclusively on the added lines. " +
-				"Flag real issues: logic errors, missing error handling, naming inconsistencies, " +
-				"style violations, and code that contradicts patterns in the example past reviews below. " +
-				"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
-				"you may optionally mention it or link its PR as a reference for your suggestion. " +
-				"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
-		}
-
-		if agentsMsg != "" {
-			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
-		}
-
-		fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
-		if err == nil && fullContent != "" {
-			sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
-		}
-
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
 		if p != nil {
@@ -196,15 +137,80 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			chunks = parser.FallbackChunk(f.Patch)
 		}
 
-		messages := []llm.Message{sysMsg}
-		messages = append(messages, pastReviewMessages...)
-
 		var fileReviewParts []string
 
 		for _, chunk := range chunks {
 			if strings.TrimSpace(chunk.Patch) == "" {
 				continue
 			}
+
+			// Retrieve relevant persona threads per chunk
+			maxExamples := cfg.MaxExamples
+			if maxExamples <= 0 {
+				maxExamples = 2 // fallback if not set or invalid
+			}
+
+			results, err := store.QueryByAuthors(ctx, chunk.Patch, maxExamples, cfg.Reviewers)
+			if err != nil {
+				return fmt.Errorf("querying vector db for file %s chunk %s: %w", f.Filename, chunk.Name, err)
+			}
+
+			var pastReviewMessages []llm.Message
+
+			// Build examples from high confidence DB results.
+			for _, r := range results {
+				if r.Score > 0.6 {
+					// Convert metadata string into an array of authors for this query
+					var authorFilter map[string]bool
+					if len(cfg.Reviewers) > 0 {
+						authorFilter = make(map[string]bool, len(cfg.Reviewers))
+						for _, rev := range cfg.Reviewers {
+							authorFilter[rev] = true
+						}
+					}
+
+					comments := vectordb.ExtractCommentsByAuthors(r.Metadata, authorFilter)
+					for _, c := range comments {
+						msg := fmt.Sprintf("Example past review comment on similar code (similarity %.2f", r.Score)
+						if url, ok := r.Metadata["url"]; ok && url != "" {
+							msg += fmt.Sprintf(", PR: %s", url)
+						}
+						msg += fmt.Sprintf("): %s", c.Body)
+
+						pastReviewMessages = append(pastReviewMessages, llm.Message{
+							Role:    "assistant",
+							Content: msg,
+						})
+					}
+				}
+			}
+
+			sysMsg := llm.Message{
+				Role: "system",
+				Content: "You are a senior code reviewer acting as the repository code owner. " +
+					"You will be given chunks of a unified diff where lines starting with '+' are additions " +
+					"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
+					"for reference only \u2014 do not comment on them. " +
+					"Focus exclusively on the added lines. " +
+					"Flag real issues: logic errors, missing error handling, naming inconsistencies, " +
+					"style violations, and code that contradicts patterns in the example past reviews below. " +
+					"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
+					"you may optionally mention it or link its PR as a reference for your suggestion. " +
+					"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
+			}
+
+			if agentsMsg != "" {
+				sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
+			}
+
+			fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
+			if err == nil && fullContent != "" {
+				sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
+			}
+
+			messages := []llm.Message{sysMsg}
+			messages = append(messages, pastReviewMessages...)
+
 
 			userMsg := llm.Message{
 				Role:    "user",

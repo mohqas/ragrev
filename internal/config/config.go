@@ -32,6 +32,8 @@ type Config struct {
 	Authors []string `yaml:"authors,omitempty"`
 	// Reviewers is the list of usernames to filter by at review time.
 	Reviewers []string `yaml:"reviewers,omitempty"`
+	// MaxExamples is the maximum number of similar past review threads to include per chunk.
+	MaxExamples int `yaml:"max_examples,omitempty"`
 	// MinCommentLen is the minimum comment body length to include.
 	MinCommentLen int `yaml:"min_comment_len"`
 	// RateDelay is the delay between processing PRs.
@@ -68,6 +70,7 @@ func Default() Config {
 	return Config{
 		BaseBranch:    "master",
 		MinCommentLen: 10,
+		MaxExamples:   2,
 		RateDelay:     Duration(1 * time.Second),
 		Backend:       "github",
 		Backends: map[string]BackendConfig{
