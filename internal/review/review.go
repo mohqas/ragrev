@@ -13,6 +13,7 @@ import (
 	"github.com/mohqas/ragrev/internal/gitutil"
 	"github.com/mohqas/ragrev/internal/llm"
 	"github.com/mohqas/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/parser"
 	"github.com/mohqas/ragrev/internal/vectordb"
 )
 
@@ -163,7 +164,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		sysMsg := llm.Message{
 			Role: "system",
 			Content: "You are a senior code reviewer acting as the repository code owner. " +
-				"You will be given a unified diff where lines starting with '+' are additions " +
+				"You will be given chunks of a unified diff where lines starting with '+' are additions " +
 				"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
 				"for reference only \u2014 do not comment on them. " +
 				"Focus exclusively on the added lines. " +
@@ -171,35 +172,61 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				"style violations, and code that contradicts patterns in the example past reviews below. " +
 				"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
 				"you may optionally mention it or link its PR as a reference for your suggestion. " +
-				"Be concise and specific. If there are no issues, say so briefly.",
+				"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
 		}
 
 		if agentsMsg != "" {
 			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
 		}
 
-		userMsg := llm.Message{
-			Role:    "user",
-			Content: fmt.Sprintf("Review the following diff for `%s`:\n\n```diff\n%s\n```", f.Filename, f.Patch),
+		p := parser.ForFile(f.Filename)
+		var chunks []parser.Chunk
+		if p != nil {
+			chunks, _ = p.Parse(f.Patch)
+		}
+		if len(chunks) == 0 {
+			chunks = parser.FallbackChunk(f.Patch)
 		}
 
 		messages := []llm.Message{sysMsg}
 		messages = append(messages, pastReviewMessages...)
-		messages = append(messages, userMsg)
 
-		log.Print("Generating review for %s...\n", f.Filename)
-		reviewText, err := provider.Complete(ctx, messages)
-		if err != nil {
-			if strings.Contains(err.Error(), "tokens_limit_reached") {
-				log.Verbose("  -> Skipping large file %s: prompt exceeded model token limit.\n\n", f.Filename)
-				reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n_Skipped context window limit exceeded. File too large for model._", f.Filename))
+		var fileReviewParts []string
+
+		for _, chunk := range chunks {
+			if strings.TrimSpace(chunk.Patch) == "" {
 				continue
 			}
-			return fmt.Errorf("calling GitHub models for %s: %w", f.Filename, err)
+
+			userMsg := llm.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch),
+			}
+			messages = append(messages, userMsg)
+
+			log.Print("Generating review for %s chunk: %s...\n", f.Filename, chunk.Name)
+			chunkReview, err := provider.Complete(ctx, messages)
+			if err != nil {
+				if strings.Contains(err.Error(), "tokens_limit_reached") {
+					log.Verbose("  -> Skipping chunk %s of %s: prompt exceeded model token limit.\n\n", chunk.Name, f.Filename)
+					fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped context window limit exceeded._", chunk.Name))
+					continue
+				}
+				return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
+			}
+
+			messages = append(messages, llm.Message{Role: "assistant", Content: chunkReview})
+			log.Verbose("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
+
+			cleanedReview := strings.TrimSpace(chunkReview)
+			if cleanedReview != "LGTM_NO_ISSUES" {
+				fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n%s", chunk.Name, cleanedReview))
+			}
 		}
 
-		reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n%s", f.Filename, reviewText))
-		log.Verbose("--- Review for %s ---\n%s\n\n", f.Filename, reviewText)
+		if len(fileReviewParts) > 0 {
+			reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n%s", f.Filename, strings.Join(fileReviewParts, "\n\n")))
+		}
 	}
 
 	if len(reviewParts) > 0 {
