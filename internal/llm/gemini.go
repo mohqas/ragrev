@@ -116,7 +116,7 @@ func (c *geminiClient) Complete(ctx context.Context, messages []Message) (string
 			}
 			delay := backoff
 			delay += time.Duration(rand.Float64() * float64(time.Second))
-			c.log.Debug("  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
+			c.log.Print("  Rate limit reached (429/503). Retrying in %v...\n", delay.Round(time.Second))
 			select {
 			case <-time.After(delay):
 				backoff *= 2
