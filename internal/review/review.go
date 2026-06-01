@@ -139,6 +139,32 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 		var fileReviewParts []string
 
+		sysMsg := llm.Message{
+			Role: "system",
+			Content: "You are a senior code reviewer acting as the repository code owner. " +
+				"You will be given chunks of a unified diff where lines starting with '+' are additions " +
+				"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
+				"for reference only \u2014 do not comment on them. " +
+				"Focus exclusively on the added lines. " +
+				"Flag real issues: logic errors, missing error handling, naming inconsistencies, " +
+				"style violations, and code that contradicts patterns in the example past reviews below. " +
+				"If a type, function, or variable appears to be missing or undeclared in the diff, ALWAYS check the FULL FILE CONTEXT provided below before flagging it as an error. " +
+				"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
+				"you may optionally mention it or link its PR as a reference for your suggestion. " +
+				"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
+		}
+
+		if agentsMsg != "" {
+			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
+		}
+
+		fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
+		if err == nil && fullContent != "" {
+			sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
+		}
+
+		conversation := []llm.Message{sysMsg}
+
 		for _, chunk := range chunks {
 			if strings.TrimSpace(chunk.Patch) == "" {
 				continue
@@ -155,7 +181,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				return fmt.Errorf("querying vector db for file %s chunk %s: %w", f.Filename, chunk.Name, err)
 			}
 
-			var pastReviewMessages []llm.Message
+			var pastReviewText string
 
 			// Build examples from high confidence DB results.
 			for _, r := range results {
@@ -171,64 +197,47 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 					comments := vectordb.ExtractCommentsByAuthors(r.Metadata, authorFilter)
 					for _, c := range comments {
-						msg := fmt.Sprintf("Example past review comment on similar code (similarity %.2f", r.Score)
+						pastReviewText += fmt.Sprintf("Example past review comment on similar code (similarity %.2f", r.Score)
 						if url, ok := r.Metadata["url"]; ok && url != "" {
-							msg += fmt.Sprintf(", PR: %s", url)
+							pastReviewText += fmt.Sprintf(", PR: %s", url)
 						}
-						msg += fmt.Sprintf("): %s", c.Body)
-
-						pastReviewMessages = append(pastReviewMessages, llm.Message{
-							Role:    "assistant",
-							Content: msg,
-						})
+						pastReviewText += fmt.Sprintf("):\n%s\n\n", c.Body)
 					}
 				}
 			}
 
-			sysMsg := llm.Message{
-				Role: "system",
-				Content: "You are a senior code reviewer acting as the repository code owner. " +
-					"You will be given chunks of a unified diff where lines starting with '+' are additions " +
-					"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
-					"for reference only \u2014 do not comment on them. " +
-					"Focus exclusively on the added lines. " +
-					"Flag real issues: logic errors, missing error handling, naming inconsistencies, " +
-					"style violations, and code that contradicts patterns in the example past reviews below. " +
-					"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
-					"you may optionally mention it or link its PR as a reference for your suggestion. " +
-					"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
+			userContent := ""
+			if pastReviewText != "" {
+				userContent += "Related past reviews for context:\n" + pastReviewText + "\n"
 			}
 
-			if agentsMsg != "" {
-				sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
+			if chunk.Kind == "overhead" {
+				userContent += "\nCRITICAL CONTEXT: This diff chunk is named 'overhead' because it contains a collection of miscellaneous diff lines (like imports, global variables, or comments) that were not assigned to a specific function or block. Since these lines can be disjointed and skip over the actual declarations present in the full file, it is completely expected for types or functions to seem 'missing' in this chunk. DO NOT log an issue about a missing declaration or implementation in the overhead chunk.\n\n"
 			}
 
-			fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
-			if err == nil && fullContent != "" {
-				sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
-			}
-
-			messages := []llm.Message{sysMsg}
-			messages = append(messages, pastReviewMessages...)
+			userContent += fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch)
 
 			userMsg := llm.Message{
 				Role:    "user",
-				Content: fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch),
+				Content: userContent,
 			}
-			messages = append(messages, userMsg)
+			conversation = append(conversation, userMsg)
 
 			log.Print("Generating review for %s chunk: %s...\n", f.Filename, chunk.Name)
-			chunkReview, err := provider.Complete(ctx, messages)
+			chunkReview, err := provider.Complete(ctx, conversation)
 			if err != nil {
 				if strings.Contains(err.Error(), "tokens_limit_reached") {
 					log.Verbose("  -> Skipping chunk %s of %s: prompt exceeded model token limit.\n\n", chunk.Name, f.Filename)
 					fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped context window limit exceeded._", chunk.Name))
+
+					// Revert the last user message so the token usage does not permanently block subsequent chunks
+					conversation = conversation[:len(conversation)-1]
 					continue
 				}
 				return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
 			}
 
-			messages = append(messages, llm.Message{Role: "assistant", Content: chunkReview})
+			conversation = append(conversation, llm.Message{Role: "assistant", Content: chunkReview})
 			log.Verbose("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
 
 			cleanedReview := strings.TrimSpace(chunkReview)
@@ -272,7 +281,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			log.Print("Review submitted as PENDING.\n")
 		}
 	} else {
-		log.Print("No reviewable files found.\n")
+		log.Print("No issues found to report.\n")
 	}
 
 	return nil
