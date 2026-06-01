@@ -72,11 +72,17 @@ func Default() Config {
 		MinCommentLen: 10,
 		MaxExamples:   2,
 		RateDelay:     Duration(1 * time.Second),
-		Backend:       "github",
+		Backend:       "copilot",
 		Backends: map[string]BackendConfig{
 			"github": {
 				Model:    "gpt-4o-mini",
 				URL:      "https://models.inference.ai.azure.com/chat/completions",
+				TokenEnv: "GITHUB_TOKEN",
+				TokenCmd: "gh auth token",
+			},
+			"copilot": {
+				Model:    "claude-sonnet-4.6",
+				URL:      "https://api.githubcopilot.com/chat/completions",
 				TokenEnv: "GITHUB_TOKEN",
 				TokenCmd: "gh auth token",
 			},

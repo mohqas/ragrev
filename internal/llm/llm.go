@@ -42,8 +42,8 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 	}
 
 	switch name {
-	case "github":
-		// GitHub Models use standard OpenAI chat format.
+	case "github", "copilot":
+		// GitHub Models and Copilot use standard OpenAI chat format.
 		if token == "" {
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
