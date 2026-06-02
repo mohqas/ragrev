@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/mohqas/ragrev/internal/config"
@@ -141,7 +142,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 		sysMsg := llm.Message{
 			Role: "system",
-			Content: "You are a senior code reviewer acting as the repository code owner. " +
+			Content: fmt.Sprintf("You are a senior code reviewer acting as the repository code owner. The current date is %s. ", time.Now().Format("January 2, 2006")) +
 				"You will be given chunks of a unified diff where lines starting with '+' are additions " +
 				"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
 				"for reference only \u2014 do not comment on them. " +
@@ -212,7 +213,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			}
 
 			if chunk.Kind == "overhead" {
-				userContent += "\nCRITICAL CONTEXT: This diff chunk is named 'overhead' because it contains a collection of miscellaneous diff lines (like imports, global variables, or comments) that were not assigned to a specific function or block. Since these lines can be disjointed and skip over the actual declarations present in the full file, it is completely expected for types or functions to seem 'missing' in this chunk. DO NOT log an issue about a missing declaration or implementation in the overhead chunk.\n\n"
+				userContent += "\nCRITICAL CONTEXT: This diff chunk is named 'overhead' because it contains a collection of miscellaneous diff lines (like imports, global variables, or comments) that were not assigned to a specific function or block. Since these lines can be disjointed and skip over the actual declarations present in the full file, it is completely expected for types or functions to seem 'missing' in this chunk. DO NOT log an issue about a missing declaration or implementation in the overhead chunk. Additionally, completely ignore any stylistic spacing, blank line rules, or formatting issues in this chunk, as it is a synthetic concatenation of skipped lines and its vertical spacing will not reflect the actual file.\n\n"
 			}
 
 			userContent += fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch)
