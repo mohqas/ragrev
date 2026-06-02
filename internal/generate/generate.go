@@ -102,13 +102,29 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	log.Print("\nStep 1: Scraping and appending NEW conversations to local history log...\n")
 
 	var newAddedCount int
+	var streakNoNew int
+	const maxStreak = 20 // Stop if we see maxStreak merged PRs in a row with zero new threads
+
 	err = client.ProcessReviewThreads(
 		trusted,
 		cfg.BaseBranch,
 		cfg.MinCommentLen,
 		historicalIDs, // pass historical IDs so we skip fetching/inserting them twice
-		func(prNumber int, added int) {
+		func(prNumber int, added int) error {
+			if added == 0 {
+				streakNoNew++
+				log.Verbose("  Skipping PR #%d (already fully scanned or no new comments)\n", prNumber)
+			} else {
+				streakNoNew = 0
+			}
+
+			if streakNoNew >= maxStreak {
+				log.Print("\nReached %d consecutive PRs with no new threads. Assuming history is fully scanned. Stopping early.\n", maxStreak)
+				return fmt.Errorf("STOP_EARLY")
+			}
+
 			time.Sleep(time.Duration(cfg.RateDelay))
+			return nil
 		},
 		func(threads []ghclient.Thread) error {
 			var batchAdded int

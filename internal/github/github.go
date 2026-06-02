@@ -207,7 +207,7 @@ func (c *Client) ProcessReviewThreads(
 	baseBranch string,
 	minBodyLen int,
 	existingIDs map[string]bool,
-	onPR func(prNumber int, added int),
+	onPR func(prNumber int, added int) error,
 	onBatch func(threads []Thread) error,
 ) error {
 	if c.repo == nil {
@@ -253,7 +253,12 @@ func (c *Client) ProcessReviewThreads(
 			}
 
 			if onPR != nil {
-				onPR(pr.GetNumber(), len(threads))
+				if err := onPR(pr.GetNumber(), len(threads)); err != nil {
+					if err.Error() == "STOP_EARLY" {
+						return nil
+					}
+					return err
+				}
 			}
 		}
 
