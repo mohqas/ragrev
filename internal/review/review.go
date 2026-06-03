@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ type Params struct {
 	UseAgentsOverrides bool
 	Submit             bool
 }
+
+var snippetRe = regexp.MustCompile(`(?s)<snippet>\n?(.*?)\n?</snippet>`)
 
 // Run executes the review for a specific PR.
 func Run(ctx context.Context, params Params, log *logger.Logger) error {
@@ -152,6 +155,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				"If a type, function, or variable appears to be missing or undeclared in the diff, ALWAYS check the FULL FILE CONTEXT provided below before flagging it as an error. " +
 				"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
 				"you may optionally mention it or link its PR as a reference for your suggestion. " +
+				"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text, including any prefixes. We will use this to pinpoint the inline comment.\n" +
 				"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
 		}
 
@@ -246,7 +250,38 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n%s", chunk.Name, cleanedReview))
 
 				if params.Submit {
+					startLine := chunk.StartLine
 					commentLine := chunk.EndLine
+
+					// Check for sub-chunk snippet matching
+					matches := snippetRe.FindStringSubmatch(cleanedReview)
+					if len(matches) > 1 {
+						snippetText := matches[1]
+						idx := strings.Index(chunk.Patch, snippetText)
+						if idx != -1 {
+							linesBefore := strings.Count(chunk.Patch[:idx], "\n")
+							snippetLines := strings.Count(snippetText, "\n") + 1
+							startLineOff := linesBefore
+							endLineOff := linesBefore + snippetLines - 1
+
+							var sLine, eLine int
+							for i := startLineOff; i < len(chunk.TargetLines) && i <= endLineOff; i++ {
+								if chunk.TargetLines[i] > 0 {
+									if sLine == 0 {
+										sLine = chunk.TargetLines[i]
+									}
+									eLine = chunk.TargetLines[i]
+								}
+							}
+							if sLine > 0 && eLine > 0 {
+								startLine = sLine
+								commentLine = eLine
+							}
+						}
+						cleanedReview = snippetRe.ReplaceAllString(cleanedReview, "")
+						cleanedReview = strings.TrimSpace(cleanedReview)
+					}
+
 					if commentLine == 0 {
 						commentLine = 1
 					}
@@ -262,7 +297,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 						Body: &commentBody,
 					}
 
-					startLine := chunk.StartLine
 					if startLine > 0 && startLine < commentLine {
 						draftComment.StartLine = &startLine
 						draftComment.StartSide = &side
