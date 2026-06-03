@@ -1,0 +1,63 @@
+name: ragrev
+base: core24
+version: 'git'
+summary: AI-powered code review tool using Local RAG
+description: |
+  ragrev is an AI-powered code review tool that uses Local Retrieval-Augmented
+  Generation (RAG) to provide context-aware feedback on GitHub Pull Requests.
+  It learns from historical review comments to ensure consistency with team
+  standards.
+
+grade: stable
+confinement: strict
+
+layout:
+  /etc/gitconfig:
+    bind-file: $SNAP/etc/gitconfig
+
+apps:
+  ragrev:
+    command: bin/ragrev
+    environment:
+      # Redirect gh to look for config in the user's real home directory
+      GH_CONFIG_DIR: $SNAP_REAL_HOME/.config/gh
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+      - dot-git-access
+      - dot-config-gh
+      - password-manager-service
+
+parts:
+  ragrev:
+    plugin: go
+    source: .
+    build-snaps:
+      - go/latest/stable
+    stage-packages:
+      - git
+    override-build: |
+      go build -o $CRAFT_PART_INSTALL/bin/ragrev ./cmd/ragrev
+
+  gh:
+    plugin: nil
+    stage-packages:
+      - gh
+    override-prime: |
+      craftctl default
+      mkdir -p $CRAFT_PRIME/bin
+      cp usr/bin/gh $CRAFT_PRIME/bin/gh
+
+plugs:
+  dot-git-access:
+    interface: personal-files
+    read:
+      - $HOME/.git
+    write:
+      - $HOME/.git
+  dot-config-gh:
+    interface: personal-files
+    read:
+      - $HOME/.config/gh

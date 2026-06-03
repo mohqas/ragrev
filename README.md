@@ -21,15 +21,44 @@ Traditional AI code reviewers often provide generic advice. `ragrev` changes thi
     - **Google Gemini**: Flash, Pro, ...
     - **Ollama**: Run reviews 100% locally with Llama 3 or other models.
 
-## Usage
+## Installation
 
-### 1. Installation
+### 1. Global Installation (Recommended)
 
-Install the `ragrev` binary globally using Go:
+#### Option A: Snap (Linux)
+Install the `ragrev` snap from the store:
 
+```bash
+sudo snap install ragrev
+```
+
+After installation, you **must** connect the interface to allow access to the local `.git` directory:
+
+```bash
+sudo snap connect ragrev:dot-git-access
+```
+
+Connect optional interfaces with:
+```bash
+sudo snap connect ragrev:<interface-name>
+```
+
+##### Snap Interface Connections
+
+When using the Snap version, certain permissions are required based on your usage:
+
+| Interface | Status | Purpose |
+| :--- | :--- | :--- |
+| `dot-git-access` | **Manual** | **Required**. Allows managing the knowledge base in `.git/ragrev`. |
+| `dot-config-gh` | Manual | Optional. Allows `ragrev` to reuse your system's `gh` CLI login. |
+| `password-manager-service` | Manual | Optional. Required if your `gh` token is stored in the system keyring. |
+| `removable-media` | Manual | Optional. Required if your project is on an external drive. |
+
+#### Option B: Go Install
 ```bash
 go install github.com/canonical/ragrev/cmd/ragrev@latest
 ```
+
 
 ### 2. Build the Knowledge Base
 
@@ -74,4 +103,3 @@ Settings are stored in `.git/ragrev/config.yml` and are specific to the current 
 - A GitHub repository with a configured `origin` remote.
 - A GitHub token (for API access).
 - (Optional) API keys for other LLM backends if chosen.
-
