@@ -18,6 +18,7 @@ layout:
 apps:
   ragrev:
     command: bin/ragrev
+    completer: etc/bash_completion.d/ragrev
     environment:
       # Redirect gh to look for config in the user's real home directory
       GH_CONFIG_DIR: $SNAP_REAL_HOME/.config/gh
@@ -40,6 +41,8 @@ parts:
       - git
     override-build: |
       go build -o $CRAFT_PART_INSTALL/bin/ragrev ./cmd/ragrev
+      mkdir -p $CRAFT_PART_INSTALL/etc/bash_completion.d
+      $CRAFT_PART_INSTALL/bin/ragrev completion bash > $CRAFT_PART_INSTALL/etc/bash_completion.d/ragrev
 
   gh:
     plugin: nil

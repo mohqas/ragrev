@@ -9,9 +9,8 @@ import (
 	"os"
 	"strings"
 
-	chromem "github.com/philippgille/chromem-go"
-
 	"github.com/canonical/ragrev/internal/vectorizer"
+	chromem "github.com/philippgille/chromem-go"
 )
 
 // DefaultCollection is the default collection name.
