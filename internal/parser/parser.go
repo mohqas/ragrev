@@ -12,10 +12,11 @@ var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+((\d+))(?:,\d+)? @@`)
 
 // Chunk represents a split portion of a file diff.
 type Chunk struct {
-	Name    string
-	Kind    string
-	Patch   string
-	EndLine int
+	Name      string
+	Kind      string
+	Patch     string
+	StartLine int
+	EndLine   int
 }
 
 // Parser defines the interface for language-specific diff splitters.
@@ -110,21 +111,26 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 		endIdx := diff.SourceToDiff[n.EndRow]
 
 		var chunkLines []string
+		firstLine := 0
 		lastLine := 0
 		for j := startIdx; j <= endIdx; j++ {
 			chunkLines = append(chunkLines, diff.DiffLines[j])
 			assigned[j] = true
 			if ln, ok := diff.DiffToTargetLine[j]; ok {
+				if firstLine == 0 {
+					firstLine = ln
+				}
 				lastLine = ln
 			}
 		}
 
 		if len(chunkLines) > 0 {
 			chunks = append(chunks, Chunk{
-				Name:    n.Name,
-				Kind:    n.Kind,
-				Patch:   strings.Join(chunkLines, "\n"),
-				EndLine: lastLine,
+				Name:      n.Name,
+				Kind:      n.Kind,
+				Patch:     strings.Join(chunkLines, "\n"),
+				StartLine: firstLine,
+				EndLine:   lastLine,
 			})
 		}
 	}
@@ -132,6 +138,7 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 	// Create overhead chunk for unassigned lines that relate to additions
 	var unassignedBlock []string
 	hasAdded := false
+	firstUnassignedLine := 0
 	lastUnassignedLine := 0
 	for j, a := range assigned {
 		if !a {
@@ -140,6 +147,9 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 				hasAdded = true
 			}
 			if ln, ok := diff.DiffToTargetLine[j]; ok {
+				if firstUnassignedLine == 0 {
+					firstUnassignedLine = ln
+				}
 				lastUnassignedLine = ln
 			}
 		}
@@ -147,10 +157,11 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 
 	if hasAdded && len(unassignedBlock) > 0 {
 		chunks = append(chunks, Chunk{
-			Name:    "overhead",
-			Kind:    "overhead",
-			Patch:   strings.Join(unassignedBlock, "\n"),
-			EndLine: lastUnassignedLine,
+			Name:      "overhead",
+			Kind:      "overhead",
+			Patch:     strings.Join(unassignedBlock, "\n"),
+			StartLine: firstUnassignedLine,
+			EndLine:   lastUnassignedLine,
 		})
 	}
 
@@ -160,19 +171,23 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 // FallbackChunk returns the whole diff as a single chunk.
 func FallbackChunk(patch string) []Chunk {
 	diff := ParsePatch(patch)
+	firstLine := 0
 	lastLine := 0
-	for j := len(diff.DiffLines) - 1; j >= 0; j-- {
+	for j := 0; j < len(diff.DiffLines); j++ {
 		if ln, ok := diff.DiffToTargetLine[j]; ok {
+			if firstLine == 0 {
+				firstLine = ln
+			}
 			lastLine = ln
-			break
 		}
 	}
 	return []Chunk{
 		{
-			Name:    "file",
-			Kind:    "file",
-			Patch:   patch,
-			EndLine: lastLine,
+			Name:      "file",
+			Kind:      "file",
+			Patch:     patch,
+			StartLine: firstLine,
+			EndLine:   lastLine,
 		},
 	}
 }

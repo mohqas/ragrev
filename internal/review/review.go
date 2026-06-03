@@ -255,12 +255,20 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 					side := "RIGHT"
 					commentBody := cleanedReview
 
-					draftComments = append(draftComments, &gh.DraftReviewComment{
+					draftComment := &gh.DraftReviewComment{
 						Path: &filenamePath,
 						Line: &commentLine,
 						Side: &side,
 						Body: &commentBody,
-					})
+					}
+
+					startLine := chunk.StartLine
+					if startLine > 0 && startLine < commentLine {
+						draftComment.StartLine = &startLine
+						draftComment.StartSide = &side
+					}
+
+					draftComments = append(draftComments, draftComment)
 				}
 			}
 		}
