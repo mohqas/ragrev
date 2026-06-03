@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mohqas/ragrev/internal/config"
-	"github.com/mohqas/ragrev/internal/logger"
+	"github.com/canonical/ragrev/internal/config"
+	"github.com/canonical/ragrev/internal/logger"
 )
 
 // Message is the universal minimum block needed to communicate with an LLM.

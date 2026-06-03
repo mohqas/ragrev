@@ -11,7 +11,7 @@ import (
 
 	chromem "github.com/philippgille/chromem-go"
 
-	"github.com/mohqas/ragrev/internal/vectorizer"
+	"github.com/canonical/ragrev/internal/vectorizer"
 )
 
 // DefaultCollection is the default collection name.
