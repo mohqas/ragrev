@@ -3,8 +3,12 @@ package parser
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+((\d+))(?:,\d+)? @@`)
 
 // Chunk represents a split portion of a file diff.
 type Chunk struct {
@@ -34,9 +38,10 @@ func ForFile(filename string) Parser {
 
 // ParsedDiff represents a reconstructed source and mapping back to diff lines.
 type ParsedDiff struct {
-	SourceLines  []string
-	SourceToDiff []int
-	DiffLines    []string
+	SourceLines      []string
+	SourceToDiff     []int
+	DiffLines        []string
+	DiffToTargetLine map[int]int
 }
 
 // ParsePatch reconstructs the new state of a file from a diff and builds maps.
@@ -44,22 +49,39 @@ func ParsePatch(patch string) *ParsedDiff {
 	diffLines := strings.Split(patch, "\n")
 	var sourceLines []string
 	var srcToDiff []int
+	diffToTargetLine := make(map[int]int)
 
+	currentLine := 0
 	for i, line := range diffLines {
-		if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "\\") {
+		if strings.HasPrefix(line, "@@") {
+			matches := hunkHeaderRe.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				if parsed, err := strconv.Atoi(matches[1]); err == nil {
+					currentLine = parsed
+				}
+			}
 			continue
 		}
+
+		if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "\\") {
+			continue
+		}
+
+		diffToTargetLine[i] = currentLine
 		content := line
 		if len(line) > 0 && (line[0] == ' ' || line[0] == '+') {
 			content = line[1:]
 		}
 		sourceLines = append(sourceLines, content)
 		srcToDiff = append(srcToDiff, i)
+
+		currentLine++
 	}
 	return &ParsedDiff{
-		SourceLines:  sourceLines,
-		SourceToDiff: srcToDiff,
-		DiffLines:    diffLines,
+		SourceLines:      sourceLines,
+		SourceToDiff:     srcToDiff,
+		DiffLines:        diffLines,
+		DiffToTargetLine: diffToTargetLine,
 	}
 }
 
@@ -88,16 +110,21 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 		endIdx := diff.SourceToDiff[n.EndRow]
 
 		var chunkLines []string
+		lastLine := 0
 		for j := startIdx; j <= endIdx; j++ {
 			chunkLines = append(chunkLines, diff.DiffLines[j])
 			assigned[j] = true
+			if ln, ok := diff.DiffToTargetLine[j]; ok {
+				lastLine = ln
+			}
 		}
 
 		if len(chunkLines) > 0 {
 			chunks = append(chunks, Chunk{
-				Name:  n.Name,
-				Kind:  n.Kind,
-				Patch: strings.Join(chunkLines, "\n"),
+				Name:    n.Name,
+				Kind:    n.Kind,
+				Patch:   strings.Join(chunkLines, "\n"),
+				EndLine: lastLine,
 			})
 		}
 	}
@@ -105,20 +132,25 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 	// Create overhead chunk for unassigned lines that relate to additions
 	var unassignedBlock []string
 	hasAdded := false
+	lastUnassignedLine := 0
 	for j, a := range assigned {
 		if !a {
 			unassignedBlock = append(unassignedBlock, diff.DiffLines[j])
 			if strings.HasPrefix(diff.DiffLines[j], "+") {
 				hasAdded = true
 			}
+			if ln, ok := diff.DiffToTargetLine[j]; ok {
+				lastUnassignedLine = ln
+			}
 		}
 	}
 
 	if hasAdded && len(unassignedBlock) > 0 {
 		chunks = append(chunks, Chunk{
-			Name:  "overhead",
-			Kind:  "overhead",
-			Patch: strings.Join(unassignedBlock, "\n"),
+			Name:    "overhead",
+			Kind:    "overhead",
+			Patch:   strings.Join(unassignedBlock, "\n"),
+			EndLine: lastUnassignedLine,
 		})
 	}
 
@@ -127,11 +159,20 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 
 // FallbackChunk returns the whole diff as a single chunk.
 func FallbackChunk(patch string) []Chunk {
+	diff := ParsePatch(patch)
+	lastLine := 0
+	for j := len(diff.DiffLines) - 1; j >= 0; j-- {
+		if ln, ok := diff.DiffToTargetLine[j]; ok {
+			lastLine = ln
+			break
+		}
+	}
 	return []Chunk{
 		{
-			Name:  "file",
-			Kind:  "file",
-			Patch: patch,
+			Name:    "file",
+			Kind:    "file",
+			Patch:   patch,
+			EndLine: lastLine,
 		},
 	}
 }

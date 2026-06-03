@@ -476,10 +476,8 @@ func (c *Client) CreatePendingReview(prNumber int, comments []*gh.DraftReviewCom
 		return nil
 	}
 	body := "ragrev automated review findings"
-	event := "PENDING"
 	req := &gh.PullRequestReviewRequest{
 		Body:     &body,
-		Event:    &event,
 		Comments: comments,
 	}
 
