@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - misspell
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
