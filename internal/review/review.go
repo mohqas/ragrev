@@ -82,22 +82,24 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	var reviewParts []string
 	var draftComments []*gh.DraftReviewComment
 
-	for _, f := range files {
-		if f.Status == "removed" || len(strings.TrimSpace(f.Patch)) == 0 {
-			continue
-		}
+	// 1. Collect unique AGENTS.md files across all changed files
+	var agentsMsg string
+	if params.UseAgentsOverrides {
+		if topLvl, err := gitutil.TopLevelDir(); err == nil {
+			var agentFilesContext []string
+			seenFiles := make(map[string]bool)
 
-		fullContent, _ := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
-
-		// Attempt to load AGENTS.md if flag is active
-		var agentsMsg string
-		if params.UseAgentsOverrides {
-			if topLvl, err := gitutil.TopLevelDir(); err == nil {
-				var dirsToCheck []string
-				dirsToCheck = append(dirsToCheck, topLvl)
+			for _, f := range files {
+				if f.Status == "removed" {
+					continue
+				}
 
 				dir := filepath.Dir(f.Filename)
 				currentDir := topLvl
+
+				var dirsToCheck []string
+				dirsToCheck = append(dirsToCheck, topLvl)
+
 				if dir != "." && dir != "" {
 					parts := strings.Split(filepath.ToSlash(dir), "/")
 					for _, part := range parts {
@@ -108,9 +110,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 						dirsToCheck = append(dirsToCheck, currentDir)
 					}
 				}
-
-				var agentFilesContext []string
-				seenFiles := make(map[string]bool)
 
 				for _, d := range dirsToCheck {
 					p1 := filepath.Join(d, "AGENTS.md")
@@ -127,12 +126,41 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 						}
 					}
 				}
+			}
 
-				if len(agentFilesContext) > 0 {
-					agentsMsg = strings.Join(agentFilesContext, "\n\n")
-				}
+			if len(agentFilesContext) > 0 {
+				agentsMsg = strings.Join(agentFilesContext, "\n\n")
 			}
 		}
+	}
+
+	// 2. Build the shared system message
+	sysMsg := llm.Message{
+		Role: "system",
+		Content: fmt.Sprintf("You are a senior code reviewer acting as the repository code owner. The current date is %s. ", time.Now().Format("January 2, 2006")) +
+			"You are reviewing an entire Pull Request that may span multiple files. I will provide you with the full content of a file, followed by chunks of unified diffs for that file where lines starting with '+' are additions and '-' are removals. " +
+			"Context lines are shown for reference only \u2014 do not comment on them. " +
+			"Focus exclusively on the added lines, but use your knowledge of previously reviewed files in this PR to spot cross-file inconsistencies. " +
+			"Flag real issues: logic errors, missing error handling, naming inconsistencies, and style violations. " +
+			"If a type or function appears missing in a chunk, ALWAYS check the FULL FILE CONTEXT (or context from previous files) before flagging it. " +
+			"If an example past review is highly relevant, optionally mention it. " +
+			"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text.\n" +
+			"Be concise. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
+	}
+
+	if agentsMsg != "" {
+		sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
+	}
+
+	conversation := []llm.Message{sysMsg}
+
+	// 3. Process files iteratively within the shared conversation
+	for _, f := range files {
+		if f.Status == "removed" || len(strings.TrimSpace(f.Patch)) == 0 {
+			continue
+		}
+
+		fullContent, _ := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
 
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
@@ -149,31 +177,22 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 		var fileReviewParts []string
 
-		sysMsg := llm.Message{
-			Role: "system",
-			Content: fmt.Sprintf("You are a senior code reviewer acting as the repository code owner. The current date is %s. ", time.Now().Format("January 2, 2006")) +
-				"You will be given chunks of a unified diff where lines starting with '+' are additions " +
-				"and lines starting with '-' are removals. Context lines (no prefix) are shown " +
-				"for reference only \u2014 do not comment on them. " +
-				"Focus exclusively on the added lines. " +
-				"Flag real issues: logic errors, missing error handling, naming inconsistencies, " +
-				"style violations, and code that contradicts patterns in the example past reviews below. " +
-				"If a type, function, or variable appears to be missing or undeclared in the diff, ALWAYS check the FULL FILE CONTEXT provided below before flagging it as an error. " +
-				"When making a suggestion, if an example past review has high similarity and is deeply relevant, " +
-				"you may optionally mention it or link its PR as a reference for your suggestion. " +
-				"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text, including any prefixes. We will use this to pinpoint the inline comment.\n" +
-				"Be concise and specific. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
-		}
-
-		if agentsMsg != "" {
-			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
-		}
-
+		// Announce file boundary and inject full file context as a user message
+		fileContextMsg := fmt.Sprintf("--- Reviewing file: `%s` ---\n", f.Filename)
 		if fullContent != "" {
-			sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
+			fileContextMsg += fmt.Sprintf("For reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
+		} else {
+			fileContextMsg += "Full file context is not available for this file.\n"
 		}
 
-		conversation := []llm.Message{sysMsg}
+		conversation = append(conversation, llm.Message{
+			Role:    "user",
+			Content: fileContextMsg,
+		})
+		conversation = append(conversation, llm.Message{
+			Role:    "assistant",
+			Content: "Understood. Please provide the diff chunks for this file.",
+		})
 
 		for _, chunk := range chunks {
 			if strings.TrimSpace(chunk.Patch) == "" {
@@ -240,8 +259,28 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 					log.Verbose("  -> Skipping chunk %s of %s: prompt exceeded model token limit.\n\n", chunk.Name, f.Filename)
 					fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped context window limit exceeded._", chunk.Name))
 
-					// Revert the last user message so the token usage does not permanently block subsequent chunks
+					// Revert the last user message to unblock the current chunk
 					conversation = conversation[:len(conversation)-1]
+
+					// To recover from a deep conversation buildup, remove the oldest 50% of the conversation history.
+					// We always keep index 0 (sysMsg) and preserve the most recent half of the context.
+					if len(conversation) > 3 {
+						sysMsg := conversation[0]
+						historyLen := len(conversation) - 1
+						keepLen := historyLen / 2
+
+						// Ensure we keep at least the last few turns to not completely lose immediate context
+						if keepLen < 2 && historyLen >= 2 {
+							keepLen = 2
+						}
+
+						tail := conversation[len(conversation)-keepLen:]
+						newConv := []llm.Message{sysMsg}
+						newConv = append(newConv, tail...)
+						conversation = newConv
+						log.Verbose("  -> Pruned oldest 50%% of conversation history due to token limit.\n")
+					}
+
 					continue
 				}
 				return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
