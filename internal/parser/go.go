@@ -19,11 +19,29 @@ func (p *goParser) Parse(patch string) ([]Chunk, error) {
 		return FallbackChunk(patch), nil
 	}
 	src := strings.Join(diff.SourceLines, "\n")
+	nodes := p.getNodes(src)
 
+	if len(nodes) == 0 {
+		return FallbackChunk(patch), nil
+	}
+
+	chunks, err := BuildChunks(diff, nodes)
+	if err != nil {
+		return FallbackChunk(patch), nil
+	}
+	return chunks, nil
+}
+
+func (p *goParser) ParseFull(fullSource string, patch string) ([]Chunk, error) {
+	nodes := p.getNodes(fullSource)
+	return BuildChunksFromFullFile(patch, nodes)
+}
+
+func (p *goParser) getNodes(src string) []NodeCoord {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "", src, parser.AllErrors)
 	if err != nil && file == nil {
-		return FallbackChunk(patch), nil
+		return nil
 	}
 
 	var nodes []NodeCoord
@@ -66,14 +84,5 @@ func (p *goParser) Parse(patch string) ([]Chunk, error) {
 			}
 		}
 	}
-
-	if len(nodes) == 0 {
-		return FallbackChunk(patch), nil
-	}
-
-	chunks, err := BuildChunks(diff, nodes)
-	if err != nil {
-		return FallbackChunk(patch), nil
-	}
-	return chunks, nil
+	return nodes
 }

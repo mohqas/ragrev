@@ -23,6 +23,7 @@ type Chunk struct {
 // Parser defines the interface for language-specific diff splitters.
 type Parser interface {
 	Parse(patch string) ([]Chunk, error)
+	ParseFull(fullSource string, patch string) ([]Chunk, error)
 }
 
 var registry = make(map[string]Parser)
@@ -65,11 +66,16 @@ func ParsePatch(patch string) *ParsedDiff {
 			continue
 		}
 
+		// Use the line after the prefix to determine currentLine mapping
+		// unified diff: removals (-) relate to the current line number in the NEW file
+		// where the new replacement (if any) or subsequent lines will be.
+
+		diffToTargetLine[i] = currentLine
+
 		if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "\\") {
 			continue
 		}
 
-		diffToTargetLine[i] = currentLine
 		content := line
 		if len(line) > 0 && (line[0] == ' ' || line[0] == '+') {
 			content = line[1:]
@@ -148,9 +154,13 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 	firstUnassignedLine := 0
 	lastUnassignedLine := 0
 	for j, a := range assigned {
+		line := diff.DiffLines[j]
+		if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+			continue
+		}
 		if !a {
-			unassignedBlock = append(unassignedBlock, diff.DiffLines[j])
-			if strings.HasPrefix(diff.DiffLines[j], "+") {
+			unassignedBlock = append(unassignedBlock, line)
+			if strings.HasPrefix(line, "+") {
 				hasAdded = true
 			}
 			if ln, ok := diff.DiffToTargetLine[j]; ok {
@@ -174,6 +184,117 @@ func BuildChunks(diff *ParsedDiff, nodes []NodeCoord) ([]Chunk, error) {
 			EndLine:     lastUnassignedLine,
 			TargetLines: unassignedTargetLines,
 		})
+	}
+
+	return chunks, nil
+}
+
+// BuildChunksFromFullFile splits a patch into chunks based on AST nodes from the full source.
+func BuildChunksFromFullFile(patch string, nodes []NodeCoord) ([]Chunk, error) {
+	diff := ParsePatch(patch)
+	if len(nodes) == 0 {
+		return FallbackChunk(patch), nil
+	}
+
+	assigned := make([]bool, len(diff.DiffLines))
+	var chunks []Chunk
+
+	for _, n := range nodes {
+		var chunkLines []string
+		var targetLines []int
+		firstLine := 0
+		lastLine := 0
+
+		// Nodes are defined as 0-indexed [StartRow, EndRow].
+		// Target lines are 1-indexed.
+		nodeStart := n.StartRow + 1
+		nodeEnd := n.EndRow + 1
+
+		// Check every line in the diff
+		for i, diffLine := range diff.DiffLines {
+			if assigned[i] {
+				continue
+			}
+			targetLine, ok := diff.DiffToTargetLine[i]
+			if !ok || targetLine == 0 {
+				continue
+			}
+
+			isMatch := false
+			// Heuristic for matching removal lines to AST nodes when we only have NEW file context:
+			// If it's a removal (-) it maps to targetLine (the line number it *was* at in the new file's coordinate system).
+			// If that targetLine is the start of a node, it's likely the header being replaced.
+			// If it's within the node range, it's a change inside the node.
+			if targetLine >= nodeStart && targetLine <= nodeEnd {
+				isMatch = true
+			} else if strings.HasPrefix(diffLine, "-") && targetLine == nodeStart {
+				isMatch = true
+			}
+
+			if isMatch {
+				chunkLines = append(chunkLines, diffLine)
+				assigned[i] = true
+				if firstLine == 0 {
+					firstLine = targetLine
+				}
+				lastLine = targetLine
+				targetLines = append(targetLines, targetLine)
+			}
+		}
+
+		if len(chunkLines) > 0 {
+			chunks = append(chunks, Chunk{
+				Name:        n.Name,
+				Kind:        n.Kind,
+				Patch:       strings.Join(chunkLines, "\n"),
+				StartLine:   firstLine,
+				EndLine:     lastLine,
+				TargetLines: targetLines,
+			})
+		}
+	}
+
+	// Create overhead chunk for unassigned lines that relate to additions
+	var unassignedBlock []string
+	var unassignedTargetLines []int
+	hasAdded := false
+	firstUnassignedLine := 0
+	lastUnassignedLine := 0
+	for j, a := range assigned {
+		line := diff.DiffLines[j]
+		if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
+			continue
+		}
+		if !a {
+			unassignedBlock = append(unassignedBlock, line)
+			if strings.HasPrefix(line, "+") {
+				hasAdded = true
+			}
+			if ln, ok := diff.DiffToTargetLine[j]; ok {
+				if firstUnassignedLine == 0 {
+					firstUnassignedLine = ln
+				}
+				lastUnassignedLine = ln
+				unassignedTargetLines = append(unassignedTargetLines, ln)
+			} else {
+				unassignedTargetLines = append(unassignedTargetLines, 0)
+			}
+		}
+	}
+
+	if hasAdded && len(unassignedBlock) > 0 {
+		chunks = append(chunks, Chunk{
+			Name:        "overhead",
+			Kind:        "overhead",
+			Patch:       strings.Join(unassignedBlock, "\n"),
+			StartLine:   firstUnassignedLine,
+			EndLine:     lastUnassignedLine,
+			TargetLines: unassignedTargetLines,
+		})
+	}
+
+	if len(chunks) == 0 {
+		return FallbackChunk(patch), nil
 	}
 
 	return chunks, nil

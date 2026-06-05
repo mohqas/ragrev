@@ -87,6 +87,8 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			continue
 		}
 
+		fullContent, _ := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
+
 		// Attempt to load AGENTS.md if flag is active
 		var agentsMsg string
 		if params.UseAgentsOverrides {
@@ -135,7 +137,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
 		if p != nil {
-			chunks, _ = p.Parse(f.Patch)
+			if fullContent != "" {
+				chunks, _ = p.ParseFull(fullContent, f.Patch)
+			} else {
+				chunks, _ = p.Parse(f.Patch)
+			}
 		}
 		if len(chunks) == 0 {
 			chunks = parser.FallbackChunk(f.Patch)
@@ -163,8 +169,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
 		}
 
-		fullContent, err := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
-		if err == nil && fullContent != "" {
+		if fullContent != "" {
 			sysMsg.Content += fmt.Sprintf("\n\nFULL FILE CONTEXT:\nFor reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
 		}
 

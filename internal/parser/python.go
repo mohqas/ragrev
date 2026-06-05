@@ -20,13 +20,31 @@ func (p *pyParser) Parse(patch string) ([]Chunk, error) {
 		return FallbackChunk(patch), nil
 	}
 	src := strings.Join(diff.SourceLines, "\n")
+	nodes := p.getNodes(src)
 
+	if len(nodes) == 0 {
+		return FallbackChunk(patch), nil
+	}
+
+	chunks, err := BuildChunks(diff, nodes)
+	if err != nil {
+		return FallbackChunk(patch), nil
+	}
+	return chunks, nil
+}
+
+func (p *pyParser) ParseFull(fullSource string, patch string) ([]Chunk, error) {
+	nodes := p.getNodes(fullSource)
+	return BuildChunksFromFullFile(patch, nodes)
+}
+
+func (p *pyParser) getNodes(src string) []NodeCoord {
 	parser := sitter.NewParser()
 	parser.SetLanguage(python.GetLanguage())
 
 	tree, err := parser.ParseCtx(context.Background(), nil, []byte(src))
 	if err != nil || tree == nil {
-		return FallbackChunk(patch), nil
+		return nil
 	}
 
 	var nodes []NodeCoord
@@ -54,14 +72,5 @@ func (p *pyParser) Parse(patch string) ([]Chunk, error) {
 			})
 		}
 	}
-
-	if len(nodes) == 0 {
-		return FallbackChunk(patch), nil
-	}
-
-	chunks, err := BuildChunks(diff, nodes)
-	if err != nil {
-		return FallbackChunk(patch), nil
-	}
-	return chunks, nil
+	return nodes
 }
