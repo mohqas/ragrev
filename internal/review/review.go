@@ -20,11 +20,21 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
+// ReviewMode determines whether to review a PR or local commits.
+type ReviewMode string
+
+const (
+	ModePR    ReviewMode = "pr"
+	ModeLocal ReviewMode = "local"
+)
+
 // Params holds parameters for the review command.
 type Params struct {
 	DBPath             string
 	CollectionName     string
-	PRNumber           int
+	Mode               ReviewMode
+	PRNumber           int     // for PR mode
+	Commits            []string // for local mode
 	Config             config.Config
 	UseAgentsOverrides bool
 	Submit             bool
@@ -32,12 +42,17 @@ type Params struct {
 
 var snippetRe = regexp.MustCompile(`(?s)<snippet>\n?(.*?)\n?</snippet>`)
 
-// Run executes the review for a specific PR.
+// Run executes the review for a specific PR or local commits.
 func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	cfg := params.Config
 
-	if cfg.Repo == "" {
-		return fmt.Errorf("repo is required")
+	// Validate mode-specific requirements
+	if params.Mode == ModePR && cfg.Repo == "" {
+		return fmt.Errorf("repo is required for PR reviews")
+	}
+
+	if params.Mode == ModeLocal && params.Submit {
+		return fmt.Errorf("--submit is only available when reviewing a PR")
 	}
 
 	backendName := cfg.Backend
@@ -64,19 +79,20 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		return fmt.Errorf("vector store is empty, please run 'ragrev generate' first")
 	}
 
-	// 3. Connect to GitHub and fetch PR Files
-	client, err := ghclient.NewClient(ctx)
-	if err != nil {
-		return fmt.Errorf("creating github client: %w", err)
-	}
-	if err := client.SetRepo(cfg.Repo); err != nil {
-		return fmt.Errorf("setting repo: %w", err)
-	}
+	// 3. Fetch files based on mode
+	var files []reviewFile
+	var getFileContent func(string) (string, error)
 
-	log.Print("Fetching files for PR #%d from %s...\n", params.PRNumber, client.RepoFullName())
-	files, err := client.ListPRFiles(params.PRNumber)
-	if err != nil {
-		return fmt.Errorf("fetching PR files: %w", err)
+	if params.Mode == ModePR {
+		files, getFileContent, err = fetchPRFiles(ctx, params, cfg, log)
+		if err != nil {
+			return err
+		}
+	} else {
+		files, getFileContent, err = fetchLocalFiles(params, log)
+		if err != nil {
+			return err
+		}
 	}
 
 	var reviewParts []string
@@ -160,7 +176,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			continue
 		}
 
-		fullContent, _ := client.GetPRHeadFileContent(params.PRNumber, f.Filename)
+		fullContent, _ := getFileContent(f.Filename)
 
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
@@ -362,6 +378,14 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 		if params.Submit && len(draftComments) > 0 {
 			log.Print("Submitting pending review with %d comments...\n", len(draftComments))
+			// We need the client for submission - only available in PR mode
+			client, err := ghclient.NewClient(ctx)
+			if err != nil {
+				return fmt.Errorf("creating github client for submission: %w", err)
+			}
+			if err := client.SetRepo(cfg.Repo); err != nil {
+				return fmt.Errorf("setting repo for submission: %w", err)
+			}
 			if err := client.CreatePendingReview(params.PRNumber, draftComments); err != nil {
 				return fmt.Errorf("submitting review to GH: %w", err)
 			}
@@ -373,3 +397,94 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 	return nil
 }
+
+// reviewFile is a common interface for files from both PR and local sources.
+type reviewFile struct {
+	Filename string
+	Status   string
+	Patch    string
+}
+
+// fetchPRFiles fetches files from a GitHub PR.
+func fetchPRFiles(ctx context.Context, params Params, cfg config.Config, log *logger.Logger) ([]reviewFile, func(string) (string, error), error) {
+	client, err := ghclient.NewClient(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating github client: %w", err)
+	}
+	if err := client.SetRepo(cfg.Repo); err != nil {
+		return nil, nil, fmt.Errorf("setting repo: %w", err)
+	}
+
+	log.Print("Fetching files for PR #%d from %s...\n", params.PRNumber, client.RepoFullName())
+	ghFiles, err := client.ListPRFiles(params.PRNumber)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching PR files: %w", err)
+	}
+
+	var files []reviewFile
+	for _, f := range ghFiles {
+		files = append(files, reviewFile{
+			Filename: f.Filename,
+			Status:   f.Status,
+			Patch:    f.Patch,
+		})
+	}
+
+	getContent := func(filename string) (string, error) {
+		content, err := client.GetPRHeadFileContent(params.PRNumber, filename)
+		if err != nil {
+			return "", err
+		}
+		return content, nil
+	}
+
+	return files, getContent, nil
+}
+
+// fetchLocalFiles fetches files from local git commits.
+func fetchLocalFiles(params Params, log *logger.Logger) ([]reviewFile, func(string) (string, error), error) {
+	commits := params.Commits
+
+	// Auto-detect unpushed commits if not specified
+	if len(commits) == 0 {
+		log.Verbose("No commits specified, detecting unpushed commits...\n")
+		var err error
+		commits, err = gitutil.UnpushedCommits()
+		if err != nil {
+			return nil, nil, fmt.Errorf("detecting unpushed commits: %w", err)
+		}
+		if len(commits) == 0 {
+			return nil, nil, fmt.Errorf("no unpushed commits found; specify commits explicitly or push first")
+		}
+		log.Print("Found %d unpushed commit(s)\n", len(commits))
+	}
+
+	log.Print("Reviewing %d commit(s): %s\n", len(commits), strings.Join(commits, ", "))
+
+	gitFiles, err := gitutil.ChangedFiles(commits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting changed files: %w", err)
+	}
+
+	var files []reviewFile
+	for _, f := range gitFiles {
+		files = append(files, reviewFile{
+			Filename: f.Filename,
+			Status:   f.Status,
+			Patch:    f.Patch,
+		})
+	}
+
+	// Use the last commit to fetch file content
+	lastCommit := commits[len(commits)-1]
+	getContent := func(filename string) (string, error) {
+		content, err := gitutil.FileContentAtCommit(lastCommit, filename)
+		if err != nil {
+			return "", err
+		}
+		return content, nil
+	}
+
+	return files, getContent, nil
+}
+

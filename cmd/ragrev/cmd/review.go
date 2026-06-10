@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/canonical/ragrev/internal/config"
 	"github.com/canonical/ragrev/internal/gitutil"
 	"github.com/canonical/ragrev/internal/logger"
 	"github.com/canonical/ragrev/internal/review"
@@ -15,19 +17,78 @@ import (
 )
 
 var reviewCmd = &cobra.Command{
-	Use:   "review [PR number]",
-	Short: "Perform an AI code review on a PR",
-	Args:  cobra.ExactArgs(1),
+	Use:   "review [PR number | commit | commit1:commitN | sha1,sha2,...]",
+	Short: "Perform an AI code review on a PR or local commits",
+	Long: `Perform an AI code review on a PR or local commits.
+
+If no argument is provided, reviews all unpushed commits.
+If an integer is provided, reviews that GitHub PR number.
+If a commit SHA is provided, reviews that single commit.
+If a range is provided (commit1:commitN), reviews all commits in that range.
+If comma-separated SHAs are provided, reviews those specific commits.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		prNumber, err := strconv.Atoi(args[0])
-		if err != nil {
-			return fmt.Errorf("invalid PR number: %s", args[0])
+		var mode review.ReviewMode
+		var prNumber int
+		var commits []string
+
+		if len(args) == 0 {
+			// Default: local mode with auto-detect unpushed commits
+			mode = review.ModeLocal
+			commits = []string{} // Empty means auto-detect
+		} else {
+			arg := args[0]
+
+			// Try to parse as PR number (pure integer)
+			if n, err := strconv.Atoi(arg); err == nil {
+				mode = review.ModePR
+				prNumber = n
+			} else if strings.Contains(arg, ":") {
+				// Range format: commit1:commitN
+				mode = review.ModeLocal
+				parts := strings.SplitN(arg, ":", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid range format %q, expected start:end", arg)
+				}
+				expanded, err := gitutil.ExpandCommitRange(parts[0], parts[1])
+				if err != nil {
+					return fmt.Errorf("expanding commit range: %w", err)
+				}
+				commits = expanded
+			} else if strings.Contains(arg, ",") {
+				// Comma-separated list of commits
+				mode = review.ModeLocal
+				parts := strings.Split(arg, ",")
+				for _, p := range parts {
+					commits = append(commits, strings.TrimSpace(p))
+				}
+			} else {
+				// Single commit SHA
+				mode = review.ModeLocal
+				commits = []string{arg}
+			}
+		}
+
+		// Validate --submit flag
+		submit, _ := cmd.Flags().GetBool("submit")
+		if submit && mode == review.ModeLocal {
+			return fmt.Errorf("--submit is only available when reviewing a PR")
 		}
 
 		// Load config from .git/ragrev/config.yml
 		cfg, dir, err := loadConfig()
 		if err != nil {
-			return err
+			// In local mode, repo is optional
+			if mode == review.ModeLocal && strings.Contains(err.Error(), "could not detect repo") {
+				// Use a default config with no repo
+				cfg = config.Default()
+				dir, err = ragrevDir()
+				if err != nil {
+					return fmt.Errorf("could not find .git directory: %w", err)
+				}
+			} else {
+				return err
+			}
 		}
 
 		// Apply CLI flag overrides
@@ -52,16 +113,26 @@ var reviewCmd = &cobra.Command{
 		}
 		collection, _ := cmd.Flags().GetString("collection")
 		if collection == "" {
-			collection = gitutil.RepoBaseName(cfg.Repo)
+			if cfg.Repo != "" {
+				collection = gitutil.RepoBaseName(cfg.Repo)
+			} else {
+				// For local mode without repo configured, derive from git dir
+				if topLevel, err := gitutil.TopLevelDir(); err == nil {
+					collection = filepath.Base(topLevel)
+				} else {
+					collection = "default"
+				}
+			}
 		}
 
 		useAgents, _ := cmd.Flags().GetBool("use-agents-instructions")
-		submit, _ := cmd.Flags().GetBool("submit")
 
 		params := review.Params{
 			DBPath:             dbPath,
 			CollectionName:     collection,
+			Mode:               mode,
 			PRNumber:           prNumber,
+			Commits:            commits,
 			Config:             cfg,
 			UseAgentsOverrides: useAgents,
 			Submit:             submit,
@@ -83,11 +154,11 @@ func init() {
 
 	reviewCmd.Flags().String("db-path", "", "Path to the vector store directory (default: .git/ragrev)")
 	reviewCmd.Flags().String("collection", "", "Vector store collection name (default: repo name)")
-	reviewCmd.Flags().String("repo", "", "GitHub repository owner/repo (override config)")
+	reviewCmd.Flags().String("repo", "", "GitHub repository owner/repo (override config, required for PR reviews)")
 	reviewCmd.Flags().String("reviewers", "", "Comma-separated reviewer usernames to base the review on (override config)")
 	reviewCmd.Flags().Bool("use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	reviewCmd.Flags().String("backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
-	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub")
+	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub (PR mode only)")
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	reviewCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
 }
