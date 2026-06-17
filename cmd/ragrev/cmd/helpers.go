@@ -23,7 +23,8 @@ func loadConfig() (config.Config, string, error) {
 
 	cfg, _, err := config.EnsureExists(dir)
 	if err != nil {
-		return cfg, dir, err
+		return cfg, dir, fmt.Errorf("cannot access repo data at %s; under the confined snap the repo "+
+			"must be in your home directory or on removable media (try: snap connect ragrev:removable-media): %w", dir, err)
 	}
 
 	changed := false

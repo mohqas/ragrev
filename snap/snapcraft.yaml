@@ -1,6 +1,7 @@
 name: ragrev
 base: core24
 version: 'git'
+title: RagRev
 summary: AI-powered code review tool using Local RAG
 description: |
   ragrev is an AI-powered code review tool that uses Local Retrieval-Augmented
@@ -8,28 +9,31 @@ description: |
   It learns from historical review comments to ensure consistency with team
   standards.
 
+  Authenticate by exporting a GITHUB_TOKEN (and, for the Gemini backend, a
+  GEMINI_API_KEY) in your environment before running ragrev.
+
+license: GPL-3.0
+website: https://github.com/canonical/ragrev
+source-code: https://github.com/canonical/ragrev
+issues: https://github.com/canonical/ragrev/issues
+contact: https://github.com/canonical/ragrev/issues
+
 grade: stable
 confinement: strict
-
-layout:
-  /etc/gitconfig:
-    bind-file: $SNAP/etc/gitconfig
 
 apps:
   ragrev:
     command: bin/ragrev
     completer: etc/bash_completion.d/ragrev
     environment:
-      # Redirect gh to look for config in the user's real home directory
-      GH_CONFIG_DIR: $SNAP_REAL_HOME/.config/gh
+      # Default to the bundled nano so `ragrev config` works confined.
+      EDITOR: $SNAP/usr/bin/nano
+      TERMINFO: $SNAP/usr/share/terminfo
     plugs:
       - home
       - network
       - network-bind
       - removable-media
-      - dot-git-access
-      - dot-config-gh
-      - password-manager-service
 
 parts:
   ragrev:
@@ -37,30 +41,12 @@ parts:
     source: .
     build-snaps:
       - go/latest/stable
-    stage-packages:
-      - git
     override-build: |
       go build -o $CRAFT_PART_INSTALL/bin/ragrev ./cmd/ragrev
       mkdir -p $CRAFT_PART_INSTALL/etc/bash_completion.d
       $CRAFT_PART_INSTALL/bin/ragrev completion bash > $CRAFT_PART_INSTALL/etc/bash_completion.d/ragrev
 
-  gh:
+  editor:
     plugin: nil
     stage-packages:
-      - gh
-    override-prime: |
-      craftctl default
-      mkdir -p $CRAFT_PRIME/bin
-      cp usr/bin/gh $CRAFT_PRIME/bin/gh
-
-plugs:
-  dot-git-access:
-    interface: personal-files
-    read:
-      - $HOME/.git
-    write:
-      - $HOME/.git
-  dot-config-gh:
-    interface: personal-files
-    read:
-      - $HOME/.config/gh
+      - nano

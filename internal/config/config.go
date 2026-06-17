@@ -239,7 +239,16 @@ func Edit(ragrevDir string) error {
 		editor = os.Getenv("VISUAL")
 	}
 	if editor == "" {
-		editor = "vi"
+		// Inside a confined snap, prefer the editor bundled with the snap so
+		// the command works out of the box without relying on host binaries.
+		if snap := os.Getenv("SNAP"); snap != "" {
+			if nano := filepath.Join(snap, "usr", "bin", "nano"); fileExists(nano) {
+				editor = nano
+			}
+		}
+	}
+	if editor == "" {
+		editor = "nano"
 	}
 
 	cmd := exec.Command(editor, p)
@@ -247,4 +256,10 @@ func Edit(ragrevDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// fileExists reports whether the given path exists and is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

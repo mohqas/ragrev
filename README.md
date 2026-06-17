@@ -32,27 +32,30 @@ Install the `ragrev` snap from the store:
 sudo snap install ragrev
 ```
 
-After installation, you **must** connect the interface to allow access to the local `.git` directory:
+The snap is **strictly confined** and works out of the box for repositories
+checked out anywhere under your home directory — the auto-connected `home`
+interface already covers nested `.git/ragrev` data. No manual interface
+connection is required for the common case.
+
+Authenticate by exporting a token in your environment before running ragrev:
 
 ```bash
-sudo snap connect ragrev:dot-git-access
-```
-
-Connect optional interfaces with:
-```bash
-sudo snap connect ragrev:<interface-name>
+export GITHUB_TOKEN=ghp_...        # GitHub / Copilot backends
+export GEMINI_API_KEY=...          # only for the Gemini backend
 ```
 
 ##### Snap Interface Connections
 
-When using the Snap version, certain permissions are required based on your usage:
-
 | Interface | Status | Purpose |
 | :--- | :--- | :--- |
-| `dot-git-access` | **Manual** | **Required**. Allows managing the review index in `.git/ragrev`. |
-| `dot-config-gh` | Manual | Optional. Allows `ragrev` to reuse your system's `gh` CLI login. |
-| `password-manager-service` | Manual | Optional. Required if your `gh` token is stored in the system keyring. |
-| `removable-media` | Manual | Optional. Required if your project is on an external drive. |
+| `home` | **Auto** | Access repositories (and their `.git/ragrev` index) under your home directory. |
+| `network` | **Auto** | Reach the GitHub and LLM APIs. |
+| `removable-media` | Manual | Required only if your project lives on an external drive (`/media`, `/mnt`). Connect with `sudo snap connect ragrev:removable-media`. |
+
+> Note: repositories whose `.git` sits directly at your home root, or that live
+> outside your home directory and not on removable media, are not accessible
+> under confinement by design. Move the repo under `~/` or onto removable media.
+
 
 #### Option B: Go Install
 ```bash
@@ -101,5 +104,7 @@ Settings are stored in `.git/ragrev/config.yml` and are specific to the current 
 ## Requirements
 
 - A GitHub repository with a configured `origin` remote.
-- A GitHub token (for API access).
+- A GitHub token via the `GITHUB_TOKEN` environment variable (for API access).
+  On non-snap installs, ragrev also falls back to `gh auth token` if the
+  GitHub CLI is installed and logged in.
 - (Optional) API keys for other LLM backends if chosen.
