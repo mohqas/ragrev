@@ -197,6 +197,12 @@ func UnpushedCommits() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing unpushed commits: %w", err)
 	}
+	// git log yields newest-first; return chronological (oldest-first) order so
+	// callers can use commits[0] as the base anchor and commits[len-1] as HEAD.
+	for i := 0; i < len(commits)/2; i++ {
+		j := len(commits) - 1 - i
+		commits[i], commits[j] = commits[j], commits[i]
+	}
 	return commits, nil
 }
 
