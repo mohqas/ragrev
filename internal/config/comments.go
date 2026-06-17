@@ -33,6 +33,7 @@ func marshalWithComments(cfg Config) ([]byte, error) {
 		{"authors", "Trusted reviewer usernames to ingest. Empty = all.", cfg.Authors},
 		{"reviewers", "Reviewer usernames to surface examples from. Empty = any ingested.", cfg.Reviewers},
 		{"max_examples", "Max similar past reviews included per chunk.", cfg.MaxExamples},
+		{"min_similarity_score", "Minimum vector-similarity score (0.0–1.0) to include a DB result as review context.", cfg.MinSimilarityScore},
 		{"min_comment_len", "Skip past comments shorter than this many chars.", cfg.MinCommentLen},
 		{"rate_delay", "Delay between PRs while ingesting (Go duration: 500ms, 1s, 2m).", time.Duration(cfg.RateDelay).String()},
 		{"review_scope", "Context per review: pr | file | chunk.", cfg.ReviewScope},

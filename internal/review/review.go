@@ -370,7 +370,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			// Build examples from high confidence DB results.
 			for i, r := range results {
 				log.Debug("  [%d] score=%.4f url=%s\n", i, r.Score, r.Metadata["url"])
-				if r.Score > 0.6 {
+				if float64(r.Score) >= cfg.MinSimilarityScore {
 					// Convert metadata string into an array of authors for this query
 					var authorFilter map[string]bool
 					if len(cfg.Reviewers) > 0 {

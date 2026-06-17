@@ -38,6 +38,9 @@ type Config struct {
 	Reviewers []string `yaml:"reviewers,omitempty"`
 	// MaxExamples is the maximum number of similar past review threads to include per chunk.
 	MaxExamples int `yaml:"max_examples,omitempty"`
+	// MinSimilarityScore is the minimum vector-similarity score (0–1) a DB
+	// result must reach before its comments are included as review context.
+	MinSimilarityScore float64 `yaml:"min_similarity_score,omitempty"`
 	// MinCommentLen is the minimum comment body length to include.
 	MinCommentLen int `yaml:"min_comment_len"`
 	// RateDelay is the delay between processing PRs.
@@ -83,6 +86,7 @@ func Default() Config {
 		BaseBranch:    "master",
 		MinCommentLen: 10,
 		MaxExamples:   2,
+		MinSimilarityScore: 0.5,
 		RateDelay:     Duration(1 * time.Second),
 		ReviewScope:   "pr",
 		Backend:       "copilot",
@@ -144,6 +148,9 @@ func Load(ragrevDir string) (Config, error) {
 	defaults := Default()
 	if cfg.ReviewScope == "" {
 		cfg.ReviewScope = defaults.ReviewScope
+	}
+	if cfg.MinSimilarityScore == 0 {
+		cfg.MinSimilarityScore = defaults.MinSimilarityScore
 	}
 	if cfg.Backends == nil {
 		cfg.Backends = make(map[string]BackendConfig)
