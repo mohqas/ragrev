@@ -84,6 +84,7 @@ func Default() Config {
 		MinCommentLen: 10,
 		MaxExamples:   2,
 		RateDelay:     Duration(1 * time.Second),
+		ReviewScope:   "pr",
 		Backend:       "copilot",
 		Backends: map[string]BackendConfig{
 			"github": {
@@ -109,7 +110,6 @@ func Default() Config {
 				URL:   "http://localhost:11434/v1/chat/completions",
 			},
 		},
-		ReviewScope: "pr",
 	}
 }
 
@@ -181,19 +181,21 @@ func Load(ragrevDir string) (Config, error) {
 }
 
 // Save writes the config to disk, creating the directory if needed.
+// The generated YAML is annotated with comments describing each field so
+// users can discover and tune options directly from the file.
 func Save(ragrevDir string, cfg Config) error {
 	if err := os.MkdirAll(ragrevDir, 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	data, err := yaml.Marshal(cfg)
+	data, err := marshalWithComments(cfg)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
 	p := Path(ragrevDir)
 	header := "# ragrev configuration — edit with: ragrev config\n" +
-		"# This file is stored inside .git/ and is not tracked by git.\n\n"
+		"# Comments below describe each option; values shown are the active defaults.\n\n"
 
 	if err := os.WriteFile(p, []byte(header+string(data)), 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
