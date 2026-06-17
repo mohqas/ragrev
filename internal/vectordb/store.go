@@ -7,11 +7,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/canonical/ragrev/internal/vectorizer"
 	chromem "github.com/philippgille/chromem-go"
 )
+
+// initMarkerFile is written into the DB directory once `ragrev init`/`generate`
+// has run, so review can distinguish "never initialized" from "initialized but
+// no past comments found".
+const initMarkerFile = ".initialized"
+
+// MarkInitialized records that the index has been generated at least once for
+// the given DB directory. Safe to call repeatedly.
+func MarkInitialized(dbPath string) error {
+	if err := os.MkdirAll(dbPath, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dbPath, initMarkerFile), []byte("ok\n"), 0644)
+}
+
+// Initialized reports whether MarkInitialized has been called for dbPath.
+func Initialized(dbPath string) bool {
+	_, err := os.Stat(filepath.Join(dbPath, initMarkerFile))
+	return err == nil
+}
 
 // DefaultCollection is the default collection name.
 const DefaultCollection = "reviewer_persona"

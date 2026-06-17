@@ -68,8 +68,12 @@ go install github.com/canonical/ragrev/cmd/ragrev@latest
 Run this inside your git repository to index past PRs and their comments. This step only needs to be run once initially; future runs will only fetch and append new comments incrementally.
 
 ```bash
-ragrev generate
+ragrev init
 ```
+
+> If the repository has no PRs or qualifying review comments, the index is
+> created empty — `ragrev review` will still work, falling back to a generic
+> review without historical context.
 
 ### 3. Review a Pull Request
 

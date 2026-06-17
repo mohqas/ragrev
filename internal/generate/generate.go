@@ -153,6 +153,13 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	}
 	threadsFile.Close() // done writing new data
 
+	// Record that initialization completed successfully for this DB directory,
+	// even when there are no PRs/comments to index. This lets `ragrev review`
+	// proceed with a generic review instead of demanding `ragrev init`.
+	if err := vectordb.MarkInitialized(params.DBPath); err != nil {
+		log.Verbose("warning: could not write init marker: %v\n", err)
+	}
+
 	if newAddedCount == 0 {
 		log.Print("Nothing new to add. DB is up to date.\n")
 		return nil

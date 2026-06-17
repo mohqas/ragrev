@@ -79,7 +79,12 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		return fmt.Errorf("opening vector store: %w", err)
 	}
 	if store.Count() == 0 {
-		return fmt.Errorf("vector store is empty, please run 'ragrev generate' first")
+		// Distinguish "never initialized" from "initialized but no past comments".
+		if !vectordb.Initialized(params.DBPath) {
+			return fmt.Errorf("no review index found; run 'ragrev init' first")
+		}
+		log.Print("Review index is empty (no past review comments found); " +
+			"proceeding with a generic review without historical context.\n")
 	}
 
 	// Resolve scope (param overrides config; config falls back to "pr").

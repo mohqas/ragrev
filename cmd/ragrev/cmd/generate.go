@@ -14,8 +14,17 @@ import (
 )
 
 var generateCmd = &cobra.Command{
-	Use:   "generate",
-	Short: "Build the review index from PR review comments",
+	Use:     "init",
+	Aliases: []string{"generate"},
+	Short:   "Initialize the review index from PR review comments",
+	Long: `Initialize the review index for the current repository.
+
+This scrapes merged PRs and their review comments to build the local RAG index.
+It is safe to run repeatedly; subsequent runs incrementally append new comments.
+
+Running this at least once is required before 'ragrev review'. If the repository
+has no PRs or qualifying comments, the index is created empty and reviews fall
+back to a generic review without historical context.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load config from .git/ragrev/config.yml
 		cfg, dir, err := loadConfig()
