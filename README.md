@@ -14,7 +14,7 @@ Traditional AI code reviewers often provide generic advice. `ragrev` changes thi
 
 - **AST-Aware Parsing**: Supports Go, Python, and Rust. It uses Abstract Syntax Trees to understand code structure, ensuring comments are placed accurately on relevant functions or types.
 - **Persona Filtering**: Review using the "voice" of specific team members. You can filter historical context during the review to only include comments from specific reviewers.
-- **Incremental Knowledge Base**: The knowledge base is built once and updated incrementally. Subsequent runs of the `generate` command only fetch and index new PRs.
+- **Incremental Review Index**: The review index is built once and updated incrementally. Subsequent runs of the `generate` command only fetch and index new PRs.
 - **Per-Repo Configuration**: Data and settings are stored within each repository's `.git` directory, ensuring projects remain isolated and don't conflict.
 - **Configurable LLM Backends**: Seamlessly switch between providers:
     - **GitHub/Copilot**: GPT, Claude, ...
@@ -49,7 +49,7 @@ When using the Snap version, certain permissions are required based on your usag
 
 | Interface | Status | Purpose |
 | :--- | :--- | :--- |
-| `dot-git-access` | **Manual** | **Required**. Allows managing the knowledge base in `.git/ragrev`. |
+| `dot-git-access` | **Manual** | **Required**. Allows managing the review index in `.git/ragrev`. |
 | `dot-config-gh` | Manual | Optional. Allows `ragrev` to reuse your system's `gh` CLI login. |
 | `password-manager-service` | Manual | Optional. Required if your `gh` token is stored in the system keyring. |
 | `removable-media` | Manual | Optional. Required if your project is on an external drive. |
@@ -76,7 +76,7 @@ To perform an AI review on a specific PR:
 ragrev review 123
 ```
 
-To filter the knowledge base for comments from specific reviewers (Persona Filtering):
+To filter the review index for comments from specific reviewers (Persona Filtering):
 
 ```bash
 ragrev review 123 --reviewers "username1,username2"

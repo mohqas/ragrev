@@ -15,7 +15,7 @@ import (
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Build the knowledge base from PR review comments",
+	Short: "Build the review index from PR review comments",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load config from .git/ragrev/config.yml
 		cfg, dir, err := loadConfig()

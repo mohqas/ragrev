@@ -1,4 +1,4 @@
-// Package generate orchestrates the knowledge base generation pipeline.
+// Package generate orchestrates the review index generation pipeline.
 package generate
 
 import (
@@ -28,7 +28,7 @@ type Params struct {
 	Config config.Config
 }
 
-// Run executes the knowledge base generation.
+// Run executes the review index generation.
 // Progress is written via log.
 func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	cfg := params.Config
