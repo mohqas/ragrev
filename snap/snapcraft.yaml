@@ -9,6 +9,14 @@ description: |
   It learns from historical review comments to ensure consistency with team
   standards.
 
+  Quick start:
+    1. export GITHUB_TOKEN=ghp_...
+    2. ragrev init                   # build index from past PR comments
+    3. ragrev review 123             # review a PR by number
+       ragrev review                 # review unpushed local commits
+       ragrev review abc1234         # review a single commit SHA
+       ragrev review abc1234:def5678 # review a commit range
+
   Authenticate by exporting a GITHUB_TOKEN (and, for the Gemini backend, a
   GEMINI_API_KEY) in your environment before running ragrev.
 
