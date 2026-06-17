@@ -133,4 +133,3 @@ func TestConversation_HasFile(t *testing.T) {
 		t.Fatalf("hasFile should be false after eviction")
 	}
 }
-

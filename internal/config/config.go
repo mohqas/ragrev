@@ -83,13 +83,13 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 // Default returns a Config with sensible defaults.
 func Default() Config {
 	return Config{
-		BaseBranch:    "master",
-		MinCommentLen: 10,
-		MaxExamples:   2,
+		BaseBranch:         "master",
+		MinCommentLen:      10,
+		MaxExamples:        2,
 		MinSimilarityScore: 0.5,
-		RateDelay:     Duration(1 * time.Second),
-		ReviewScope:   "pr",
-		Backend:       "copilot",
+		RateDelay:          Duration(1 * time.Second),
+		ReviewScope:        "pr",
+		Backend:            "copilot",
 		Backends: map[string]BackendConfig{
 			"github": {
 				Model:    "gpt-4o-mini",

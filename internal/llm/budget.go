@@ -65,4 +65,3 @@ func DefaultMaxPromptTokens(model string) int {
 		return 24_000
 	}
 }
-

@@ -129,4 +129,3 @@ func encodeBackendConfig(bc BackendConfig) (*yaml.Node, error) {
 
 	return node, nil
 }
-

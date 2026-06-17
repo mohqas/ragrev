@@ -221,4 +221,3 @@ func ExpandCommitRange(start, end string) ([]string, error) {
 
 	return commits, nil
 }
-

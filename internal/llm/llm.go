@@ -75,4 +75,3 @@ func resolveBudget(cfg config.BackendConfig) int {
 	}
 	return DefaultMaxPromptTokens(cfg.Model)
 }
-
