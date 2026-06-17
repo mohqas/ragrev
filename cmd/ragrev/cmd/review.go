@@ -127,6 +127,8 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 
 		useAgents, _ := cmd.Flags().GetBool("use-agents-instructions")
 
+		scopeFlag, _ := cmd.Flags().GetString("scope")
+
 		params := review.Params{
 			DBPath:             dbPath,
 			CollectionName:     collection,
@@ -136,6 +138,7 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 			Config:             cfg,
 			UseAgentsOverrides: useAgents,
 			Submit:             submit,
+			Scope:              review.ScopeMode(scopeFlag),
 		}
 
 		verbose, _ := cmd.Flags().GetBool("verbose")
@@ -159,6 +162,7 @@ func init() {
 	reviewCmd.Flags().Bool("use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	reviewCmd.Flags().String("backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
 	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub (PR mode only)")
+	reviewCmd.Flags().String("scope", "", "Review context scope: pr (default, preload entire PR), file (preload one file at a time), or chunk (only the chunk + its file per call)")
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	reviewCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
 }

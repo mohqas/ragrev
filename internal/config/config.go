@@ -19,6 +19,10 @@ type BackendConfig struct {
 	URL      string `yaml:"url"`
 	TokenEnv string `yaml:"token_env,omitempty"`
 	TokenCmd string `yaml:"token_cmd,omitempty"`
+	// MaxPromptTokens is the maximum prompt size (in tokens) ragrev will
+	// send to this backend. When 0, a sensible per-model default (~75%
+	// of the model's advertised context window) is used.
+	MaxPromptTokens int `yaml:"max_prompt_tokens,omitempty"`
 }
 
 // Config holds all shared settings used by both generate and review commands.
@@ -43,6 +47,14 @@ type Config struct {
 	Backend string `yaml:"backend,omitempty"`
 	// Backends holds configuration for each individual LLM provider.
 	Backends map[string]BackendConfig `yaml:"backends,omitempty"`
+
+	// ReviewScope controls how much PR context is preloaded into the LLM
+	// conversation before chunk-level review. One of:
+	//   - "pr"    : preload every changed file's full content up front (default)
+	//   - "file"  : inject each file's full content lazily when its first chunk is reviewed
+	//   - "chunk" : send only the chunk diff plus the relevant file content per call,
+	//               discarding history between chunks
+	ReviewScope string `yaml:"review_scope,omitempty"`
 }
 
 // Duration wraps time.Duration for YAML marshaling as a human-readable string.
@@ -97,6 +109,7 @@ func Default() Config {
 				URL:   "http://localhost:11434/v1/chat/completions",
 			},
 		},
+		ReviewScope: "pr",
 	}
 }
 
@@ -129,6 +142,9 @@ func Load(ragrevDir string) (Config, error) {
 
 	// Merge back missing default backends or backend properties
 	defaults := Default()
+	if cfg.ReviewScope == "" {
+		cfg.ReviewScope = defaults.ReviewScope
+	}
 	if cfg.Backends == nil {
 		cfg.Backends = make(map[string]BackendConfig)
 	}

@@ -21,6 +21,9 @@ type Message struct {
 // Provider represents an abstract LLM backend.
 type Provider interface {
 	Complete(ctx context.Context, messages []Message) (string, error)
+	// MaxPromptTokens returns the maximum prompt size in tokens that ragrev
+	// will pack into a single call to this provider.
+	MaxPromptTokens() int
 }
 
 // NewProvider returns a Provider implementation configured per backendCfg.
@@ -48,19 +51,28 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
 		// GitHub expects "Bearer <token>" but OpenAI Client can just prepend Bearer if it's not empty
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, log), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), log), nil
 
 	case "ollama":
 		// Ollama is an OpenAI-compatible API without auth.
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", log), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", resolveBudget(backendCfg), log), nil
 
 	case "gemini":
 		if token == "" {
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
-		return newGeminiClient(backendCfg.URL, backendCfg.Model, token, log), nil
+		return newGeminiClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), log), nil
 
 	default:
 		return nil, fmt.Errorf("unknown LLM backend provider: %s", name)
 	}
 }
+
+// resolveBudget returns the configured MaxPromptTokens or a model-derived default.
+func resolveBudget(cfg config.BackendConfig) int {
+	if cfg.MaxPromptTokens > 0 {
+		return cfg.MaxPromptTokens
+	}
+	return DefaultMaxPromptTokens(cfg.Model)
+}
+

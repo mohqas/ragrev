@@ -37,20 +37,24 @@ type geminiResponse struct {
 }
 
 type geminiClient struct {
-	url   string
-	model string
-	token string
-	log   *logger.Logger
+	url       string
+	model     string
+	token     string
+	maxTokens int
+	log       *logger.Logger
 }
 
-func newGeminiClient(url, model, token string, log *logger.Logger) *geminiClient {
+func newGeminiClient(url, model, token string, maxTokens int, log *logger.Logger) *geminiClient {
 	return &geminiClient{
-		url:   url,
-		model: model,
-		token: token,
-		log:   log,
+		url:       url,
+		model:     model,
+		token:     token,
+		maxTokens: maxTokens,
+		log:       log,
 	}
 }
+
+func (c *geminiClient) MaxPromptTokens() int { return c.maxTokens }
 
 func (c *geminiClient) Complete(ctx context.Context, messages []Message) (string, error) {
 	var reqBody geminiRequest

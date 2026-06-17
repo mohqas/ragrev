@@ -26,20 +26,24 @@ type chatResponse struct {
 }
 
 type openaiClient struct {
-	url   string
-	model string
-	token string
-	log   *logger.Logger
+	url       string
+	model     string
+	token     string
+	maxTokens int
+	log       *logger.Logger
 }
 
-func newOpenAIClient(url, model, token string, log *logger.Logger) *openaiClient {
+func newOpenAIClient(url, model, token string, maxTokens int, log *logger.Logger) *openaiClient {
 	return &openaiClient{
-		url:   url,
-		model: model,
-		token: token,
-		log:   log,
+		url:       url,
+		model:     model,
+		token:     token,
+		maxTokens: maxTokens,
+		log:       log,
 	}
 }
+
+func (c *openaiClient) MaxPromptTokens() int { return c.maxTokens }
 
 func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string, error) {
 	reqBody := chatRequest{

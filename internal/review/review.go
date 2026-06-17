@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,11 +34,13 @@ type Params struct {
 	DBPath             string
 	CollectionName     string
 	Mode               ReviewMode
-	PRNumber           int     // for PR mode
+	PRNumber           int      // for PR mode
 	Commits            []string // for local mode
 	Config             config.Config
 	UseAgentsOverrides bool
 	Submit             bool
+	// Scope overrides Config.ReviewScope when non-empty.
+	Scope ScopeMode
 }
 
 var snippetRe = regexp.MustCompile(`(?s)<snippet>\n?(.*?)\n?</snippet>`)
@@ -79,6 +82,17 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		return fmt.Errorf("vector store is empty, please run 'ragrev generate' first")
 	}
 
+	// Resolve scope (param overrides config; config falls back to "pr").
+	scopeStr := string(params.Scope)
+	if scopeStr == "" {
+		scopeStr = cfg.ReviewScope
+	}
+	scope, err := validateScope(scopeStr)
+	if err != nil {
+		return err
+	}
+	log.Verbose("Review scope: %s\n", scope)
+
 	// 3. Fetch files based on mode
 	var files []reviewFile
 	var getFileContent func(string) (string, error)
@@ -94,6 +108,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			return err
 		}
 	}
+
+	// Sort files for deterministic ordering (helps with prompt caching too).
+	sort.SliceStable(files, func(i, j int) bool {
+		return files[i].Filename < files[j].Filename
+	})
 
 	var reviewParts []string
 	var draftComments []*gh.DraftReviewComment
@@ -154,11 +173,13 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	sysMsg := llm.Message{
 		Role: "system",
 		Content: fmt.Sprintf("You are a senior code reviewer acting as the repository code owner. The current date is %s. ", time.Now().Format("January 2, 2006")) +
-			"You are reviewing an entire Pull Request that may span multiple files. I will provide you with the full content of a file, followed by chunks of unified diffs for that file where lines starting with '+' are additions and '-' are removals. " +
-			"Context lines are shown for reference only \u2014 do not comment on them. " +
-			"Focus exclusively on the added lines, but use your knowledge of previously reviewed files in this PR to spot cross-file inconsistencies. " +
+			"You are reviewing an entire Pull Request that may span multiple files. " +
+			"Each file's full content is introduced with a header in the form `===== FILE: <path> =====` followed by the file body. " +
+			"Diff chunks for review are prefixed with `FILE: <path>` and `CHUNK: <name>` so you always know which file they belong to, regardless of the order chunks arrive. " +
+			"In a unified diff, lines starting with '+' are additions and '-' are removals; context lines are shown for reference only — do not comment on them. " +
+			"Focus exclusively on the added lines, but freely cross-reference any file in this PR to spot inconsistencies. " +
 			"Flag real issues: logic errors, missing error handling, naming inconsistencies, and style violations. " +
-			"If a type or function appears missing in a chunk, ALWAYS check the FULL FILE CONTEXT (or context from previous files) before flagging it. " +
+			"If a type or function appears missing in a chunk, ALWAYS check the FULL FILE CONTEXT (or context from other files in this PR) before flagging it. " +
 			"If an example past review is highly relevant, optionally mention it. " +
 			"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text.\n" +
 			"Be concise. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
@@ -168,15 +189,132 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		sysMsg.Content += "\n\nCRITICAL CONTEXT: The repository contains an AGENTS.md file with specific technical instructions for AI tools. You MUST strictly adhere to these rules when reviewing:\n\n" + agentsMsg
 	}
 
-	conversation := []llm.Message{sysMsg}
+	budget := provider.MaxPromptTokens()
+	// Reserve room for the model's response and per-chunk overhead.
+	const responseReserve = 4096
+	const perChunkReserve = 2048
+	effectiveBudget := budget - responseReserve - perChunkReserve
+	if effectiveBudget < 1024 {
+		effectiveBudget = 1024
+	}
+	log.Verbose("LLM budget: %d prompt tokens (effective %d after reserves)\n", budget, effectiveBudget)
 
-	// 3. Process files iteratively within the shared conversation
+	conv := newConversation(sysMsg, budget, log)
+
+	// Per-file cached full content (avoids double-fetching for preload + lazy injection).
+	fileContents := make(map[string]string, len(files))
+	loadContent := func(name string) string {
+		if v, ok := fileContents[name]; ok {
+			return v
+		}
+		content, _ := getFileContent(name)
+		fileContents[name] = content
+		return content
+	}
+
+	// preloaded tracks files whose full content currently lives in conv as a
+	// preload entry (used to decide whether to inline file context inside a
+	// chunk message).
+	preloaded := make(map[string]bool)
+	// completedFiles tracks files whose chunks have all been reviewed; the
+	// pruner prefers evicting these first.
+	completedFiles := make(map[string]bool)
+
+	// Helper: build the per-file context header user-message.
+	fileContextMessage := func(filename, content string) llm.Message {
+		body := fmt.Sprintf("===== FILE: %s =====\n", filename)
+		if content != "" {
+			body += fmt.Sprintf("Full content of `%s` at the PR head:\n\n```\n%s\n```\n", filename, content)
+		} else {
+			body += fmt.Sprintf("Full content of `%s` is not available.\n", filename)
+		}
+		return llm.Message{Role: "user", Content: body}
+	}
+
+	// ---- Scope=PR: preload all file contents up front ----
+	if scope == ScopePR {
+		// Determine which files have at least one reviewable chunk so we don't
+		// waste budget on no-op files.
+		preloadCandidates := make([]reviewFile, 0, len(files))
+		for _, f := range files {
+			if f.Status == "removed" || len(strings.TrimSpace(f.Patch)) == 0 {
+				continue
+			}
+			preloadCandidates = append(preloadCandidates, f)
+		}
+
+		// Build per-file token estimates.
+		type sized struct {
+			file    reviewFile
+			content string
+			tokens  int
+		}
+		sizes := make([]sized, 0, len(preloadCandidates))
+		baseTokens := llm.EstimateTokens(sysMsg.Content) + 4
+		totalTokens := baseTokens
+		for _, f := range preloadCandidates {
+			content := loadContent(f.Filename)
+			msg := fileContextMessage(f.Filename, content)
+			t := llm.EstimateTokens(msg.Content) + 4
+			sizes = append(sizes, sized{file: f, content: content, tokens: t})
+			totalTokens += t
+		}
+
+		// Drop the largest files first until everything fits.
+		// Keep at least 1 preload if it would still fit, otherwise we'll fall
+		// back to per-file lazy injection for everything.
+		dropped := make(map[string]bool)
+		if totalTokens > effectiveBudget {
+			log.Verbose("Preload exceeds budget (%d > %d); dropping largest files.\n", totalTokens, effectiveBudget)
+			ordered := make([]int, len(sizes))
+			for i := range sizes {
+				ordered[i] = i
+			}
+			sort.Slice(ordered, func(a, b int) bool {
+				return sizes[ordered[a]].tokens > sizes[ordered[b]].tokens
+			})
+			for _, idx := range ordered {
+				if totalTokens <= effectiveBudget {
+					break
+				}
+				dropped[sizes[idx].file.Filename] = true
+				totalTokens -= sizes[idx].tokens
+				log.Verbose("  -> Skipping preload for %s (%d tokens).\n", sizes[idx].file.Filename, sizes[idx].tokens)
+			}
+		}
+
+		preloadedAny := false
+		for _, s := range sizes {
+			if dropped[s.file.Filename] {
+				continue
+			}
+			conv.append(convEntry{
+				msg:  fileContextMessage(s.file.Filename, s.content),
+				kind: kindPreloadFile,
+				file: s.file.Filename,
+			})
+			preloaded[s.file.Filename] = true
+			preloadedAny = true
+		}
+		if preloadedAny {
+			conv.append(convEntry{
+				msg:  llm.Message{Role: "assistant", Content: "Understood. I have the file contents for this PR. Please send the diff chunks."},
+				kind: kindPreloadAck,
+			})
+		}
+	}
+
+	// Track lazy-injection state for scope=file.
+	announcedFile := ""
+
+	// 3. Process files iteratively
 	for _, f := range files {
 		if f.Status == "removed" || len(strings.TrimSpace(f.Patch)) == 0 {
+			completedFiles[f.Filename] = true
 			continue
 		}
 
-		fullContent, _ := getFileContent(f.Filename)
+		fullContent := loadContent(f.Filename)
 
 		p := parser.ForFile(f.Filename)
 		var chunks []parser.Chunk
@@ -193,22 +331,21 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 		var fileReviewParts []string
 
-		// Announce file boundary and inject full file context as a user message
-		fileContextMsg := fmt.Sprintf("--- Reviewing file: `%s` ---\n", f.Filename)
-		if fullContent != "" {
-			fileContextMsg += fmt.Sprintf("For reference, here is the full content of `%s` at the PR head:\n\n```\n%s\n```\n", f.Filename, fullContent)
-		} else {
-			fileContextMsg += "Full file context is not available for this file.\n"
+		// Scope=file: announce file boundary lazily, once per file, with full content.
+		if scope == ScopeFile && announcedFile != f.Filename {
+			conv.append(convEntry{
+				msg:  fileContextMessage(f.Filename, fullContent),
+				kind: kindFileHeader,
+				file: f.Filename,
+			})
+			conv.append(convEntry{
+				msg:  llm.Message{Role: "assistant", Content: "Understood. Please provide the diff chunks for this file."},
+				kind: kindFileHeaderAck,
+				file: f.Filename,
+			})
+			preloaded[f.Filename] = true
+			announcedFile = f.Filename
 		}
-
-		conversation = append(conversation, llm.Message{
-			Role:    "user",
-			Content: fileContextMsg,
-		})
-		conversation = append(conversation, llm.Message{
-			Role:    "assistant",
-			Content: "Understood. Please provide the diff chunks for this file.",
-		})
 
 		for _, chunk := range chunks {
 			if strings.TrimSpace(chunk.Patch) == "" {
@@ -251,7 +388,25 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				}
 			}
 
-			userContent := ""
+			userContent := fmt.Sprintf("FILE: %s\nCHUNK: %s (kind: %s)\n\n", f.Filename, chunk.Name, chunk.Kind)
+
+			// Scope=chunk OR PR-scope file that was dropped from preload:
+			// inline the file content with the chunk.
+			needInlineContent := false
+			switch scope {
+			case ScopeChunk:
+				needInlineContent = true
+			case ScopePR:
+				if !preloaded[f.Filename] && !conv.hasFile(f.Filename) {
+					needInlineContent = true
+				}
+			}
+			if needInlineContent && fullContent != "" {
+				userContent += fmt.Sprintf("Full content of `%s` at the PR head (for reference):\n\n```\n%s\n```\n\n", f.Filename, fullContent)
+			} else if needInlineContent {
+				userContent += "Full file content is not available for this file.\n\n"
+			}
+
 			if pastReviewText != "" {
 				userContent += "Related past reviews for context:\n" + pastReviewText + "\n"
 			}
@@ -260,49 +415,85 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				userContent += "\nCRITICAL CONTEXT: This diff chunk is named 'overhead' because it contains a collection of miscellaneous diff lines (like imports, global variables, or comments) that were not assigned to a specific function or block. Since these lines can be disjointed and skip over the actual declarations present in the full file, it is completely expected for types or functions to seem 'missing' in this chunk. DO NOT log an issue about a missing declaration or implementation in the overhead chunk. Additionally, completely ignore any stylistic spacing, blank line rules, or formatting issues in this chunk, as it is a synthetic concatenation of skipped lines and its vertical spacing will not reflect the actual file.\n\n"
 			}
 
-			userContent += fmt.Sprintf("Review the following diff chunk for `%s` (kind: %s, name: %s):\n\n```diff\n%s\n```", f.Filename, chunk.Kind, chunk.Name, chunk.Patch)
+			userContent += fmt.Sprintf("Review the following diff chunk:\n\n```diff\n%s\n```", chunk.Patch)
 
-			userMsg := llm.Message{
-				Role:    "user",
-				Content: userContent,
+			// For scope=chunk we run an isolated call so the conversation never
+			// grows beyond [sysMsg, userMsg]. We snapshot/restore conv around
+			// the call to keep the same code path for token-limit recovery.
+			var convForCall *conversation
+			if scope == ScopeChunk {
+				convForCall = newConversation(sysMsg, budget, log)
+				convForCall.append(convEntry{
+					msg:  llm.Message{Role: "user", Content: userContent},
+					kind: kindChunkUser,
+					file: f.Filename,
+				})
+			} else {
+				conv.append(convEntry{
+					msg:  llm.Message{Role: "user", Content: userContent},
+					kind: kindChunkUser,
+					file: f.Filename,
+				})
+				convForCall = conv
 			}
-			conversation = append(conversation, userMsg)
+
+			// Proactive pre-call sizing: if we're over budget already, prune
+			// before bothering the API.
+			if convForCall.estTokens() > effectiveBudget {
+				convForCall.prune(completedFiles, effectiveBudget)
+			}
 
 			log.Print("Generating review for %s chunk: %s...\n", f.Filename, chunk.Name)
-			chunkReview, err := provider.Complete(ctx, conversation)
+			chunkReview, err := provider.Complete(ctx, convForCall.messages())
 			if err != nil {
 				if strings.Contains(err.Error(), "tokens_limit_reached") {
-					log.Verbose("  -> Skipping chunk %s of %s: prompt exceeded model token limit.\n\n", chunk.Name, f.Filename)
-					fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped context window limit exceeded._", chunk.Name))
+					log.Verbose("  -> tokens_limit_reached for chunk %s of %s; attempting recovery.\n", chunk.Name, f.Filename)
 
-					// Revert the last user message to unblock the current chunk
-					conversation = conversation[:len(conversation)-1]
-
-					// To recover from a deep conversation buildup, remove the oldest 50% of the conversation history.
-					// We always keep index 0 (sysMsg) and preserve the most recent half of the context.
-					if len(conversation) > 3 {
-						sysMsg := conversation[0]
-						historyLen := len(conversation) - 1
-						keepLen := historyLen / 2
-
-						// Ensure we keep at least the last few turns to not completely lose immediate context
-						if keepLen < 2 && historyLen >= 2 {
-							keepLen = 2
-						}
-
-						tail := conversation[len(conversation)-keepLen:]
-						newConv := []llm.Message{sysMsg}
-						newConv = append(newConv, tail...)
-						conversation = newConv
-						log.Verbose("  -> Pruned oldest 50%% of conversation history due to token limit.\n")
+					if scope == ScopeChunk {
+						// Nothing to prune in an isolated conversation.
+						fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped: context window limit exceeded._", chunk.Name))
+						continue
 					}
 
-					continue
+					// Roll back the just-appended chunkUser message.
+					conv.dropLastN(1)
+					// Aggressively prune.
+					target := effectiveBudget / 2
+					if target < 1024 {
+						target = 1024
+					}
+					conv.prune(completedFiles, target)
+
+					// Retry once with the same chunk content.
+					conv.append(convEntry{
+						msg:  llm.Message{Role: "user", Content: userContent},
+						kind: kindChunkUser,
+						file: f.Filename,
+					})
+					chunkReview, err = provider.Complete(ctx, conv.messages())
+					if err != nil {
+						if strings.Contains(err.Error(), "tokens_limit_reached") {
+							log.Verbose("  -> Still over limit after prune; skipping chunk %s of %s.\n\n", chunk.Name, f.Filename)
+							fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped: context window limit exceeded._", chunk.Name))
+							conv.dropLastN(1)
+							continue
+						}
+						return fmt.Errorf("calling LLM provider for %s after prune: %w", f.Filename, err)
+					}
+				} else {
+					return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
 				}
-				return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
 			}
 
-			conversation = append(conversation, llm.Message{Role: "assistant", Content: chunkReview})
+			// Record assistant reply only for non-chunk scopes (chunk scope
+			// intentionally discards history between calls).
+			if scope != ScopeChunk {
+				conv.append(convEntry{
+					msg:  llm.Message{Role: "assistant", Content: chunkReview},
+					kind: kindChunkAssistant,
+					file: f.Filename,
+				})
+			}
 			log.Verbose("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
 
 			cleanedReview := strings.TrimSpace(chunkReview)
@@ -366,6 +557,10 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 				}
 			}
 		}
+
+		// Mark this file as fully reviewed so its preloaded content becomes
+		// a prune candidate before content for files we haven't reached yet.
+		completedFiles[f.Filename] = true
 
 		if len(fileReviewParts) > 0 {
 			reviewParts = append(reviewParts, fmt.Sprintf("### `%s`\n%s", f.Filename, strings.Join(fileReviewParts, "\n\n")))
@@ -487,4 +682,3 @@ func fetchLocalFiles(params Params, log *logger.Logger) ([]reviewFile, func(stri
 
 	return files, getContent, nil
 }
-
