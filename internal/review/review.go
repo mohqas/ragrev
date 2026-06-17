@@ -365,8 +365,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 			var pastReviewText string
 
+			log.Debug("DB results for %s / %s: %d candidate(s)\n", f.Filename, chunk.Name, len(results))
+
 			// Build examples from high confidence DB results.
-			for _, r := range results {
+			for i, r := range results {
+				log.Debug("  [%d] score=%.4f url=%s\n", i, r.Score, r.Metadata["url"])
 				if r.Score > 0.6 {
 					// Convert metadata string into an array of authors for this query
 					var authorFilter map[string]bool
@@ -377,8 +380,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 						}
 					}
 
+					log.Debug("       code: %s\n", truncate(r.Content, 300))
 					comments := vectordb.ExtractCommentsByAuthors(r.Metadata, authorFilter)
+					log.Debug("       -> above threshold: %d comment(s) after author filter\n", len(comments))
 					for _, c := range comments {
+						log.Debug("          author=%s body=%q\n", c.Author, truncate(c.Body, 120))
 						pastReviewText += fmt.Sprintf("Example past review comment on similar code (similarity %.2f", r.Score)
 						if url, ok := r.Metadata["url"]; ok && url != "" {
 							pastReviewText += fmt.Sprintf(", PR: %s", url)
@@ -598,6 +604,15 @@ type reviewFile struct {
 	Filename string
 	Status   string
 	Patch    string
+}
+
+// truncate shortens s to at most n runes, appending "…" when cut.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }
 
 // fetchPRFiles fetches files from a GitHub PR.
