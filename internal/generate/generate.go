@@ -158,7 +158,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			}
 
 			if batchAdded > 0 {
-				log.Verbose("  Appended %d new threads to local history (example URL: %s)\n", batchAdded, threads[0].PRURL)
+				log.Print("  Appended %d new threads to local history (example URL: %s)\n", batchAdded, threads[0].PRURL)
 			}
 			return nil
 		},
