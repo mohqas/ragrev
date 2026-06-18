@@ -24,10 +24,18 @@ var repoPattern = regexp.MustCompile(`github\.com[:/]([^/]+/[^/.\s]+?)(?:\.git)?
 // walking up parent directories to find the .git folder.
 func openRepo() (*git.Repository, error) {
 	repo, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
-	if err != nil {
-		return nil, fmt.Errorf("not inside a git repository: %w", err)
+	if err == nil {
+		return repo, nil
 	}
-	return repo, nil
+
+	// go-git strictly validates .git/config and refuses to open repositories
+	// whose branch entries it considers invalid (e.g. "branch config: invalid
+	// merge"). Retry with a storage wrapper that sanitizes the config in-memory.
+	if repo, lerr := openRepoLenient(); lerr == nil {
+		return repo, nil
+	}
+
+	return nil, fmt.Errorf("not inside a git repository: %w", err)
 }
 
 // resolveHash resolves a revision string (full/abbrev SHA, ref, etc.) to a hash.
