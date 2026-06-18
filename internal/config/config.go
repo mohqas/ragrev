@@ -238,12 +238,17 @@ func Edit(ragrevDir string) error {
 	if editor == "" {
 		editor = os.Getenv("VISUAL")
 	}
+
+	var args []string
 	if editor == "" {
 		// Inside a confined snap, prefer the editor bundled with the snap so
 		// the command works out of the box without relying on host binaries.
 		if snap := os.Getenv("SNAP"); snap != "" {
 			if nano := filepath.Join(snap, "usr", "bin", "nano"); fileExists(nano) {
 				editor = nano
+				// -I stops nano from reading the base/host /etc/nanorc, which
+				// AppArmor denies inside the confined snap.
+				args = append(args, "-I")
 			}
 		}
 	}
@@ -251,7 +256,8 @@ func Edit(ragrevDir string) error {
 		editor = "nano"
 	}
 
-	cmd := exec.Command(editor, p)
+	args = append(args, p)
+	cmd := exec.Command(editor, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

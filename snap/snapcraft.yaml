@@ -34,8 +34,6 @@ apps:
     command: bin/ragrev
     completer: etc/bash_completion.d/ragrev
     environment:
-      # Default to the bundled nano so `ragrev config` works confined.
-      EDITOR: $SNAP/usr/bin/nano
       TERMINFO: $SNAP/usr/share/terminfo
     plugs:
       - home
@@ -58,3 +56,11 @@ parts:
     plugin: nil
     stage-packages:
       - nano
+    override-build: |
+      craftctl default
+      # Don't bundle full vim; instead expose the lightweight `vi`/`vim.tiny`
+      # from the base as `vim` so `EDITOR=vim` resolves inside the confined
+      # snap. The absolute target resolves to the base snap at runtime, and
+      # $SNAP/usr/bin is earlier on PATH so this symlink wins.
+      mkdir -p "$CRAFT_PART_INSTALL/usr/bin"
+      ln -sf /usr/bin/vi "$CRAFT_PART_INSTALL/usr/bin/vim"
