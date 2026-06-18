@@ -87,7 +87,7 @@ func Default() Config {
 		MinCommentLen:      10,
 		MaxExamples:        2,
 		MinSimilarityScore: 0.5,
-		RateDelay:          Duration(1 * time.Second),
+		RateDelay:          Duration(100 * time.Millisecond),
 		ReviewScope:        "pr",
 		Backend:            "copilot",
 		Backends: map[string]BackendConfig{

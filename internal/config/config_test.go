@@ -15,8 +15,8 @@ func TestDefault(t *testing.T) {
 	if cfg.MinCommentLen != 10 {
 		t.Errorf("MinCommentLen = %d, want 10", cfg.MinCommentLen)
 	}
-	if time.Duration(cfg.RateDelay) != 1*time.Second {
-		t.Errorf("RateDelay = %v, want 1s", time.Duration(cfg.RateDelay))
+	if time.Duration(cfg.RateDelay) != 100*time.Millisecond {
+		t.Errorf("RateDelay = %v, want 200ms", time.Duration(cfg.RateDelay))
 	}
 }
 
@@ -69,8 +69,8 @@ func TestSaveAndLoad(t *testing.T) {
 	if loaded.MinCommentLen != 15 {
 		t.Errorf("MinCommentLen = %d, want 15", loaded.MinCommentLen)
 	}
-	if time.Duration(loaded.RateDelay) != 1*time.Second {
-		t.Errorf("RateDelay = %v, want 1s", time.Duration(loaded.RateDelay))
+	if time.Duration(loaded.RateDelay) != 100*time.Millisecond {
+		t.Errorf("RateDelay = %v, want 200ms", time.Duration(loaded.RateDelay))
 	}
 	if loaded.Backend != "gemini" {
 		t.Errorf("Backend = %q, want gemini", loaded.Backend)

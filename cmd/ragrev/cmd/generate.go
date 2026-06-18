@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/canonical/ragrev/internal/config"
 	"github.com/canonical/ragrev/internal/generate"
@@ -73,8 +71,9 @@ back to a generic review without historical context.`,
 		debug, _ := cmd.Flags().GetBool("debug")
 		log := logger.New(os.Stderr, verbose, debug)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
+		// No overall timeout: large repos (tens of thousands of PRs) can take
+		// a long time to scan. The context is still cancelable via signals.
+		ctx := cmd.Context()
 
 		return generate.Run(ctx, params, log)
 	},

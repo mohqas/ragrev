@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/canonical/ragrev/internal/logger"
 	gh "github.com/google/go-github/v72/github"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
@@ -89,6 +91,7 @@ type Client struct {
 	api  *gh.Client
 	ctx  context.Context
 	repo *gh.Repository
+	log  *logger.Logger
 }
 
 // NewClient creates a Client authenticated via GITHUB_TOKEN env var
@@ -106,13 +109,89 @@ func NewClient(ctx context.Context) (*Client, error) {
 	return &Client{api: api, ctx: ctx}, nil
 }
 
+// SetLogger attaches a logger so the client can emit debug output for
+// retries and token refreshes. Safe to call with nil.
+func (c *Client) SetLogger(log *logger.Logger) {
+	c.log = log
+}
+
+// logDebug writes a debug message if a logger is attached.
+func (c *Client) logDebug(format string, args ...any) {
+	if c.log != nil {
+		c.log.Debug(format, args...)
+	}
+}
+
+// refreshToken re-resolves the GitHub token (env → gh CLI → hosts.yml) and
+// rebuilds the underlying API client. Used to recover from 401 errors when a
+// short-lived token expires mid-run.
+func (c *Client) refreshToken() error {
+	token, err := Token()
+	if err != nil {
+		return err
+	}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	httpClient := oauth2.NewClient(c.ctx, ts)
+	c.api = gh.NewClient(httpClient)
+	return nil
+}
+
+// withRetry runs fn with exponential backoff. fn must return the *gh.Response
+// (used to detect HTTP status) and an error. On a 401 the token is refreshed
+// before retrying so an expired credential doesn't abort a long run.
+func (c *Client) withRetry(desc string, fn func() (*gh.Response, error)) error {
+	const maxAttempts = 5
+	backoff := 200 * time.Millisecond
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		resp, err := fn()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+
+		// Refresh credentials on auth failures before the next attempt.
+		if status == 401 {
+			if rerr := c.refreshToken(); rerr != nil {
+				c.logDebug("  github: token refresh after 401 failed: %v\n", rerr)
+			} else {
+				c.logDebug("  github: refreshed token after 401 (%s)\n", desc)
+			}
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		c.logDebug("  github: %s failed (attempt %d/%d): %v; retrying in %v\n",
+			desc, attempt, maxAttempts, err, backoff)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	return lastErr
+}
+
 // SetRepo configures the client to work with the given "owner/repo" string.
 func (c *Client) SetRepo(nameWithOwner string) error {
 	parts := strings.SplitN(nameWithOwner, "/", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid repo format %q, expected owner/repo", nameWithOwner)
 	}
-	repo, _, err := c.api.Repositories.Get(c.ctx, parts[0], parts[1])
+	var repo *gh.Repository
+	err := c.withRetry(fmt.Sprintf("fetching repo %s", nameWithOwner), func() (*gh.Response, error) {
+		var (
+			resp *gh.Response
+			e    error
+		)
+		repo, resp, e = c.api.Repositories.Get(c.ctx, parts[0], parts[1])
+		return resp, e
+	})
 	if err != nil {
 		return fmt.Errorf("fetching repo %s: %w", nameWithOwner, err)
 	}
@@ -148,7 +227,13 @@ func (c *Client) ListPRFiles(prNumber int) ([]PRFile, error) {
 	var files []PRFile
 
 	for {
-		ghFiles, resp, err := c.api.PullRequests.ListFiles(c.ctx, owner, name, prNumber, opts)
+		var ghFiles []*gh.CommitFile
+		var resp *gh.Response
+		err := c.withRetry(fmt.Sprintf("listing files for PR #%d", prNumber), func() (*gh.Response, error) {
+			var e error
+			ghFiles, resp, e = c.api.PullRequests.ListFiles(c.ctx, owner, name, prNumber, opts)
+			return resp, e
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +263,15 @@ func (c *Client) GetPRHeadFileContent(prNumber int, filename string) (string, er
 	owner := c.repo.GetOwner().GetLogin()
 	name := c.repo.GetName()
 
-	pr, _, err := c.api.PullRequests.Get(c.ctx, owner, name, prNumber)
+	var pr *gh.PullRequest
+	err := c.withRetry(fmt.Sprintf("getting PR #%d info", prNumber), func() (*gh.Response, error) {
+		var (
+			resp *gh.Response
+			e    error
+		)
+		pr, resp, e = c.api.PullRequests.Get(c.ctx, owner, name, prNumber)
+		return resp, e
+	})
 	if err != nil {
 		return "", fmt.Errorf("getting PR #%d info: %w", prNumber, err)
 	}
@@ -187,7 +280,15 @@ func (c *Client) GetPRHeadFileContent(prNumber int, filename string) (string, er
 		Ref: pr.GetHead().GetSHA(),
 	}
 
-	fileContent, _, _, err := c.api.Repositories.GetContents(c.ctx, owner, name, filename, opts)
+	var fileContent *gh.RepositoryContent
+	err = c.withRetry(fmt.Sprintf("getting contents of %s for PR #%d", filename, prNumber), func() (*gh.Response, error) {
+		var (
+			resp *gh.Response
+			e    error
+		)
+		fileContent, _, resp, e = c.api.Repositories.GetContents(c.ctx, owner, name, filename, opts)
+		return resp, e
+	})
 	if err != nil {
 		return "", err
 	}
@@ -202,16 +303,29 @@ func (c *Client) GetPRHeadFileContent(prNumber int, filename string) (string, er
 // ProcessReviewThreads fetches conversation threads from merged PRs and calls
 // onBatch for each PR's threads.
 // trustedAuthors filters which comments to include (nil/empty = all).
+//
+// scanned maps PR numbers that were fully processed in previous runs to the
+// PR's updatedAt at that time; such PRs are skipped (no comment fetch) when
+// unchanged. watermark is the newest updatedAt covered by a previously
+// completed run: once iteration (which is ordered by updatedAt descending)
+// reaches a PR at or below it, the remaining history is already covered and
+// pagination stops.
+//
+// It returns the newest PR updatedAt observed in this run so callers can
+// persist it as the next watermark.
 func (c *Client) ProcessReviewThreads(
 	trustedAuthors map[string]bool,
 	baseBranch string,
 	minBodyLen int,
 	existingIDs map[string]bool,
-	onPR func(prNumber int, added int) error,
+	scanned map[int]time.Time,
+	watermark time.Time,
+	onPR func(prNumber int, added int, updatedAt time.Time) error,
 	onBatch func(threads []Thread) error,
-) error {
+) (time.Time, error) {
+	var newest time.Time
 	if c.repo == nil {
-		return fmt.Errorf("repo not set; call SetRepo first")
+		return newest, fmt.Errorf("repo not set; call SetRepo first")
 	}
 	if baseBranch == "" {
 		baseBranch = "master"
@@ -231,33 +345,56 @@ func (c *Client) ProcessReviewThreads(
 	}
 
 	for {
-		prs, resp, err := c.api.PullRequests.List(c.ctx, owner, name, opts)
+		var prs []*gh.PullRequest
+		var resp *gh.Response
+		err := c.withRetry("listing PRs", func() (*gh.Response, error) {
+			var e error
+			prs, resp, e = c.api.PullRequests.List(c.ctx, owner, name, opts)
+			return resp, e
+		})
 		if err != nil {
-			return fmt.Errorf("listing PRs: %w", err)
+			return newest, fmt.Errorf("listing PRs: %w", err)
 		}
 
 		for _, pr := range prs {
+			updated := pr.GetUpdatedAt().Time
+			if updated.After(newest) {
+				newest = updated
+			}
+
+			// Stop once we cross into history fully covered by a previous run.
+			if !watermark.IsZero() && !updated.After(watermark) {
+				c.logDebug("  github: reached watermark %s at PR #%d; stopping pagination\n",
+					watermark.Format(time.RFC3339), pr.GetNumber())
+				return newest, nil
+			}
+
 			if pr.GetMergedAt().IsZero() {
 				continue
 			}
 
-			threads, err := c.fetchPRThreads(owner, name, pr.GetNumber(), trustedAuthors, minBodyLen, existingIDs, pr.GetHTMLURL())
+			prNum := pr.GetNumber()
+
+			// Cheaply skip PRs already scanned and unchanged since then.
+			if prev, ok := scanned[prNum]; ok && !updated.After(prev) {
+				c.logDebug("  github: PR #%d already scanned and unchanged; skipping\n", prNum)
+				continue
+			}
+
+			threads, err := c.fetchPRThreads(owner, name, prNum, trustedAuthors, minBodyLen, existingIDs, pr.GetHTMLURL())
 			if err != nil {
-				return fmt.Errorf("fetching comments for PR #%d: %w", pr.GetNumber(), err)
+				return newest, fmt.Errorf("fetching comments for PR #%d: %w", prNum, err)
 			}
 
 			if len(threads) > 0 {
 				if err := onBatch(threads); err != nil {
-					return fmt.Errorf("processing batch for PR #%d: %w", pr.GetNumber(), err)
+					return newest, fmt.Errorf("processing batch for PR #%d: %w", prNum, err)
 				}
 			}
 
 			if onPR != nil {
-				if err := onPR(pr.GetNumber(), len(threads)); err != nil {
-					if err.Error() == "STOP_EARLY" {
-						return nil
-					}
-					return err
+				if err := onPR(prNum, len(threads), updated); err != nil {
+					return newest, err
 				}
 			}
 		}
@@ -268,7 +405,7 @@ func (c *Client) ProcessReviewThreads(
 		opts.Page = resp.NextPage
 	}
 
-	return nil
+	return newest, nil
 }
 
 // fetchPRThreads fetches all review comments for a PR and groups them
@@ -288,7 +425,13 @@ func (c *Client) fetchPRThreads(
 	// Collect all raw comments first.
 	var allRaw []*gh.PullRequestComment
 	for {
-		comments, resp, err := c.api.PullRequests.ListComments(c.ctx, owner, name, prNumber, opts)
+		var comments []*gh.PullRequestComment
+		var resp *gh.Response
+		err := c.withRetry(fmt.Sprintf("listing comments for PR #%d", prNumber), func() (*gh.Response, error) {
+			var e error
+			comments, resp, e = c.api.PullRequests.ListComments(c.ctx, owner, name, prNumber, opts)
+			return resp, e
+		})
 		if err != nil {
 			return nil, err
 		}

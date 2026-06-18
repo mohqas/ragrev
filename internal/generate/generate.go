@@ -50,6 +50,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	client.SetLogger(log)
 	if err := client.SetRepo(cfg.Repo); err != nil {
 		return fmt.Errorf("setting repo: %w", err)
 	}
@@ -99,29 +100,44 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 		return fmt.Errorf("opening local history file: %w", err)
 	}
 
+	// Load PR-level scan state: which PRs were already processed (to skip
+	// cheaply) and the watermark from the last completed run (to stop early).
+	scannedPRs, err := loadScannedPRs(params.DBPath)
+	if err != nil {
+		return fmt.Errorf("loading scanned PRs: %w", err)
+	}
+	watermark := loadWatermark(params.DBPath)
+	if len(scannedPRs) > 0 {
+		log.Verbose("Loaded %d previously scanned PRs (watermark: %s).\n",
+			len(scannedPRs), formatWatermark(watermark))
+	}
+
+	scannedWriter, err := newScannedPRWriter(params.DBPath)
+	if err != nil {
+		threadsFile.Close()
+		return err
+	}
+
 	log.Print("\nStep 1: Scraping and appending NEW conversations to local history log...\n")
 
 	var newAddedCount int
-	var streakNoNew int
-	const maxStreak = 20 // Stop if we see maxStreak merged PRs in a row with zero new threads
 
-	err = client.ProcessReviewThreads(
+	newest, err := client.ProcessReviewThreads(
 		trusted,
 		cfg.BaseBranch,
 		cfg.MinCommentLen,
 		historicalIDs, // pass historical IDs so we skip fetching/inserting them twice
-		func(prNumber int, added int) error {
+		scannedPRs,    // PRs already processed in prior runs
+		watermark,     // stop once we reach history covered by a completed run
+		func(prNumber int, added int, updatedAt time.Time) error {
 			if added == 0 {
-				streakNoNew++
-				log.Verbose("  Skipping PR #%d (already fully scanned or no new comments)\n", prNumber)
-			} else {
-				streakNoNew = 0
+				log.Verbose("  PR #%d processed (no new comments)\n", prNumber)
 			}
-
-			if streakNoNew >= maxStreak {
-				log.Print("\nReached %d consecutive PRs with no new threads. Assuming history is fully scanned. Stopping early.\n", maxStreak)
-				return fmt.Errorf("STOP_EARLY")
+			// Record this PR as scanned so future runs skip it.
+			if err := scannedWriter.record(prNumber, updatedAt); err != nil {
+				return fmt.Errorf("recording scanned PR #%d: %w", prNumber, err)
 			}
+			scannedPRs[prNumber] = updatedAt
 
 			time.Sleep(time.Duration(cfg.RateDelay))
 			return nil
@@ -147,11 +163,19 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			return nil
 		},
 	)
+	threadsFile.Close()   // done writing new data
+	scannedWriter.Close() // done recording scanned PRs
 	if err != nil {
-		threadsFile.Close()
 		return fmt.Errorf("fetching review threads: %w", err)
 	}
-	threadsFile.Close() // done writing new data
+
+	// Persist the new watermark only after a successful run so interrupted
+	// runs don't advance the stop boundary past unscanned history.
+	if newest.After(watermark) {
+		if err := saveWatermark(params.DBPath, newest); err != nil {
+			log.Verbose("warning: could not save scan watermark: %v\n", err)
+		}
+	}
 
 	// Record that initialization completed successfully for this DB directory,
 	// even when there are no PRs/comments to index. This lets `ragrev review`
