@@ -4,6 +4,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,18 +139,60 @@ func (c *Client) refreshToken() error {
 
 // withRetry runs fn with exponential backoff. fn must return the *gh.Response
 // (used to detect HTTP status) and an error. On a 401 the token is refreshed
-// before retrying so an expired credential doesn't abort a long run.
+// before retrying so an expired credential doesn't abort a long run. GitHub
+// rate-limit errors (primary 5000/h and secondary/abuse limits) are handled by
+// waiting until the limit resets and retrying without consuming the normal
+// attempt budget.
 func (c *Client) withRetry(desc string, fn func() (*gh.Response, error)) error {
 	const maxAttempts = 5
+	const maxRateLimitWaits = 20
 	backoff := 200 * time.Millisecond
+	rateLimitWaits := 0
 
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := 1; ; {
 		resp, err := fn()
 		if err == nil {
 			return nil
 		}
 		lastErr = err
+
+		// Handle GitHub rate limiting explicitly: wait until it resets, then
+		// retry. These waits don't count against maxAttempts.
+		var rlErr *gh.RateLimitError
+		var abuseErr *gh.AbuseRateLimitError
+		if errors.As(err, &rlErr) {
+			if rateLimitWaits >= maxRateLimitWaits {
+				break
+			}
+			rateLimitWaits++
+			wait := time.Until(rlErr.Rate.Reset.Time) + 2*time.Second
+			if wait < 2*time.Second {
+				wait = 2 * time.Second
+			}
+			c.logDebug("  github: rate limit exceeded (%s); waiting %v until reset\n",
+				desc, wait.Round(time.Second))
+			if !c.sleep(wait) {
+				return c.ctx.Err()
+			}
+			continue
+		}
+		if errors.As(err, &abuseErr) {
+			if rateLimitWaits >= maxRateLimitWaits {
+				break
+			}
+			rateLimitWaits++
+			wait := 60 * time.Second
+			if abuseErr.RetryAfter != nil {
+				wait = *abuseErr.RetryAfter
+			}
+			c.logDebug("  github: secondary rate limit (%s); waiting %v\n",
+				desc, wait.Round(time.Second))
+			if !c.sleep(wait) {
+				return c.ctx.Err()
+			}
+			continue
+		}
 
 		status := 0
 		if resp != nil {
@@ -165,16 +208,35 @@ func (c *Client) withRetry(desc string, fn func() (*gh.Response, error)) error {
 			}
 		}
 
-		if attempt == maxAttempts {
+		if attempt >= maxAttempts {
 			break
 		}
 
 		c.logDebug("  github: %s failed (attempt %d/%d): %v; retrying in %v\n",
 			desc, attempt, maxAttempts, err, backoff)
-		time.Sleep(backoff)
+		if !c.sleep(backoff) {
+			return c.ctx.Err()
+		}
 		backoff *= 2
+		attempt++
 	}
 	return lastErr
+}
+
+// sleep waits for d or until the client context is cancelled. It returns false
+// if the context was cancelled (so callers can abort cleanly).
+func (c *Client) sleep(d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-c.ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // SetRepo configures the client to work with the given "owner/repo" string.
