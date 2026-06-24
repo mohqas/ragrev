@@ -106,10 +106,10 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("loading scanned PRs: %w", err)
 	}
-	watermark := loadWatermark(params.DBPath)
+	watermark := loadWatermark(params.DBPath, cfg.BaseBranch)
 	if len(scannedPRs) > 0 {
-		log.Verbose("Loaded %d previously scanned PRs (watermark: %s).\n",
-			len(scannedPRs), formatWatermark(watermark))
+		log.Verbose("Loaded %d previously scanned PRs (watermark for base %q: %s).\n",
+			len(scannedPRs), cfg.BaseBranch, formatWatermark(watermark))
 	}
 
 	scannedWriter, err := newScannedPRWriter(params.DBPath)
@@ -172,7 +172,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	// Persist the new watermark only after a successful run so interrupted
 	// runs don't advance the stop boundary past unscanned history.
 	if newest.After(watermark) {
-		if err := saveWatermark(params.DBPath, newest); err != nil {
+		if err := saveWatermark(params.DBPath, cfg.BaseBranch, newest); err != nil {
 			log.Verbose("warning: could not save scan watermark: %v\n", err)
 		}
 	}
