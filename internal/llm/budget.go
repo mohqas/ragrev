@@ -29,6 +29,17 @@ func EstimateMessagesTokens(msgs []Message) int {
 // the caller always gets a positive budget to work with.
 func DefaultMaxPromptTokens(model string) int {
 	m := strings.ToLower(model)
+
+	// Normalize OpenRouter-style slugs: "provider/model-name:variant"
+	// e.g. "anthropic/claude-opus-4:beta" → "claude-opus-4"
+	//      "meta-llama/llama-3.3-70b-instruct:free" → "llama-3.3-70b-instruct"
+	if idx := strings.LastIndex(m, "/"); idx >= 0 {
+		m = m[idx+1:]
+	}
+	if idx := strings.Index(m, ":"); idx >= 0 {
+		m = m[:idx]
+	}
+
 	switch {
 	// Gemini 1.5 / 2.x: ~1M context
 	case strings.Contains(m, "gemini-1.5"),
@@ -50,17 +61,32 @@ func DefaultMaxPromptTokens(model string) int {
 		return 12_000
 	case strings.Contains(m, "gpt-3.5"):
 		return 12_000
-	// Llama 3 / 3.1 commonly 8k–128k depending on variant; pick the safe 8k figure.
+	// Llama 3 / 3.1 / 3.2 / 3.3 commonly 8k–128k depending on variant; use 128k safe figure.
 	case strings.Contains(m, "llama-3.1"),
 		strings.Contains(m, "llama3.1"),
 		strings.Contains(m, "llama-3.2"),
-		strings.Contains(m, "llama3.2"):
+		strings.Contains(m, "llama3.2"),
+		strings.Contains(m, "llama-3.3"),
+		strings.Contains(m, "llama3.3"):
 		return 96_000
 	case strings.Contains(m, "llama3"),
 		strings.Contains(m, "llama-3"),
 		strings.Contains(m, "llama2"),
 		strings.Contains(m, "llama-2"):
 		return 6_000
+	// Z.ai GLM-4 / GLM-4.5 / GLM-Z1: 128k context
+	case strings.Contains(m, "glm-4"),
+		strings.Contains(m, "glm-z1"):
+		return 96_000
+	// Z.ai GLM-5.2: 1M context
+	case strings.Contains(m, "glm-5.2"):
+		return 750_000
+	// Z.ai GLM-5 / GLM-5.1 / GLM-5-turbo: 200k context
+	case strings.Contains(m, "glm-5"):
+		return 150_000
+	// Z.ai GLM-3: 32k context
+	case strings.Contains(m, "glm-3"):
+		return 24_000
 	default:
 		return 24_000
 	}

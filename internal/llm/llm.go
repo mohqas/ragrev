@@ -64,17 +64,31 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
 		// GitHub expects "Bearer <token>" but OpenAI Client can just prepend Bearer if it's not empty
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), log), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), nil, log), nil
 
 	case "ollama":
 		// Ollama is an OpenAI-compatible API without auth.
-		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", resolveBudget(backendCfg), log), nil
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, "", resolveBudget(backendCfg), nil, log), nil
 
 	case "gemini":
 		if token == "" {
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
 		return newGeminiClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), log), nil
+
+	case "openrouter":
+		// OpenRouter is an OpenAI-compatible gateway that routes to many
+		// underlying models (Claude, Llama, GLM, Gemini, etc.) via a single
+		// endpoint. HTTP-Referer and X-Title are courtesy attribution headers
+		// recommended by OpenRouter.
+		if token == "" {
+			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
+		}
+		extraHeaders := map[string]string{
+			"HTTP-Referer": "https://github.com/canonical/ragrev",
+			"X-Title":      "ragrev",
+		}
+		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), extraHeaders, log), nil
 
 	default:
 		return nil, fmt.Errorf("unknown LLM backend provider: %s", name)

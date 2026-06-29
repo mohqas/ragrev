@@ -129,6 +129,11 @@ func Default() Config {
 				Model: "llama3",
 				URL:   "http://localhost:11434/v1/chat/completions",
 			},
+			"openrouter": {
+				Model:    "meta-llama/llama-3.3-70b-instruct:free",
+				URL:      "https://openrouter.ai/api/v1/chat/completions",
+				TokenEnv: "OPENROUTER_API_KEY",
+			},
 		},
 	}
 }

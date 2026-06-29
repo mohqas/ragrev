@@ -31,20 +31,22 @@ type chatResponse struct {
 }
 
 type openaiClient struct {
-	url       string
-	model     string
-	token     string
-	maxTokens int
-	log       *logger.Logger
+	url          string
+	model        string
+	token        string
+	maxTokens    int
+	extraHeaders map[string]string
+	log          *logger.Logger
 }
 
-func newOpenAIClient(url, model, token string, maxTokens int, log *logger.Logger) *openaiClient {
+func newOpenAIClient(url, model, token string, maxTokens int, extraHeaders map[string]string, log *logger.Logger) *openaiClient {
 	return &openaiClient{
-		url:       url,
-		model:     model,
-		token:     token,
-		maxTokens: maxTokens,
-		log:       log,
+		url:          url,
+		model:        model,
+		token:        token,
+		maxTokens:    maxTokens,
+		extraHeaders: extraHeaders,
+		log:          log,
 	}
 }
 
@@ -75,6 +77,9 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 		req.Header.Set("Content-Type", "application/json")
 		if c.token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		for k, v := range c.extraHeaders {
+			req.Header.Set(k, v)
 		}
 
 		resp, err := http.DefaultClient.Do(req)
