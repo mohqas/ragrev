@@ -16,9 +16,13 @@ Traditional AI code reviewers often provide generic advice. `ragrev` changes thi
 - **Persona Filtering**: Review using the "voice" of specific team members. You can filter historical context during the review to only include comments from specific reviewers.
 - **Incremental Review Index**: The review index is built once and updated incrementally. Subsequent runs of the `generate` command only fetch and index new PRs.
 - **Per-Repo Configuration**: Data and settings are stored within each repository's `.git` directory, ensuring projects remain isolated and don't conflict.
+- **Rich Syntax-Highlighted Output**: Review results are rendered with syntax highlighting. The colour theme is configurable via `output_theme` in the config file (any [Chroma theme](https://xyproto.github.io/splash/docs/all.html) is accepted; default: `github`).
+- **Token Usage Summary**: After each review, a concise token-cost breakdown is printed — model name, number of LLM calls, retries, skipped chunks, and prompt/output/total token counts with thousands separators.
+- **Custom Review Prompt**: Override the built-in system prompt with your own via the `review_prompt` config key, giving full control over the LLM's review instructions.
 - **Configurable LLM Backends**: Seamlessly switch between providers:
-    - **GitHub/Copilot**: GPT, Claude, ...
-    - **Google Gemini**: Flash, Pro, ...
+    - **GitHub/Copilot**: GPT, Claude, and any model available through GitHub Models or Copilot.
+    - **Google Gemini**: Flash, Pro, and other Gemini variants.
+    - **OpenRouter**: Access hundreds of models — Claude, Llama, GLM, Mistral, and more — through a single API key (`OPENROUTER_API_KEY`). Just set `backend: openrouter` and pick any [OpenRouter model slug](https://openrouter.ai/models) as the `model`.
     - **Ollama**: Run reviews 100% locally with Llama 3 or other models.
 
 ## Installation
@@ -41,7 +45,8 @@ Authenticate by exporting a token in your environment before running ragrev:
 
 ```bash
 export GITHUB_TOKEN=ghp_...        # GitHub / Copilot backends
-export GEMINI_API_KEY=...          # only for the Gemini backend
+export GEMINI_API_KEY=...          # Gemini backend
+export OPENROUTER_API_KEY=...      # OpenRouter backend
 ```
 
 ##### Snap Interface Connections
@@ -103,7 +108,14 @@ Customize your backend, repo settings, and default reviewers:
 ragrev config
 ```
 
-Settings are stored in `.git/ragrev/config.yml` and are specific to the current repository.
+Settings are stored in `.git/ragrev/config.yml` and are specific to the current repository. Notable options added recently:
+
+| Key | Description |
+| :--- | :--- |
+| `backend` | Active LLM backend (`copilot`, `gemini`, `openrouter`, `ollama`). |
+| `backends.<name>.model` | Model identifier for that backend (e.g. `anthropic/claude-opus-4` for OpenRouter). |
+| `output_theme` | Syntax-highlight theme for review output (e.g. `github`, `monokai`, `github-dark`). |
+| `review_prompt` | Replaces the built-in system prompt. Leave empty to use the default. |
 
 ## Requirements
 
@@ -111,4 +123,5 @@ Settings are stored in `.git/ragrev/config.yml` and are specific to the current 
 - A GitHub token via the `GITHUB_TOKEN` environment variable (for API access).
   On non-snap installs, ragrev also falls back to `gh auth token` if the
   GitHub CLI is installed and logged in.
-- (Optional) API keys for other LLM backends if chosen.
+- (Optional) `GEMINI_API_KEY` for the Gemini backend.
+- (Optional) `OPENROUTER_API_KEY` for the OpenRouter backend.
