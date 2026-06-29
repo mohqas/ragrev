@@ -206,6 +206,9 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 	conv := newConversation(sysMsg, budget, log)
 
+	// Aggregate token usage across all LLM calls for the post-review summary.
+	stats := usageStats{model: provider.Model()}
+
 	// Per-file cached full content (avoids double-fetching for preload + lazy injection).
 	fileContents := make(map[string]string, len(files))
 	loadContent := func(name string) string {
@@ -455,13 +458,14 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			}
 
 			log.Print("Generating review for %s chunk: %s...\n", f.Filename, chunk.Name)
-			chunkReview, err := provider.Complete(ctx, convForCall.messages())
+			chunkReview, usage, err := provider.Complete(ctx, convForCall.messages())
 			if err != nil {
 				if strings.Contains(err.Error(), "tokens_limit_reached") {
 					log.Verbose("  -> tokens_limit_reached for chunk %s of %s; attempting recovery.\n", chunk.Name, f.Filename)
 
 					if scope == ScopeChunk {
 						// Nothing to prune in an isolated conversation.
+						stats.skipped++
 						fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped: context window limit exceeded._", chunk.Name))
 						continue
 					}
@@ -481,20 +485,25 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 						kind: kindChunkUser,
 						file: f.Filename,
 					})
-					chunkReview, err = provider.Complete(ctx, conv.messages())
+					chunkReview, usage, err = provider.Complete(ctx, conv.messages())
 					if err != nil {
 						if strings.Contains(err.Error(), "tokens_limit_reached") {
 							log.Verbose("  -> Still over limit after prune; skipping chunk %s of %s.\n\n", chunk.Name, f.Filename)
+							stats.skipped++
 							fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n_Skipped: context window limit exceeded._", chunk.Name))
 							conv.dropLastN(1)
 							continue
 						}
 						return fmt.Errorf("calling LLM provider for %s after prune: %w", f.Filename, err)
 					}
+					stats.retries++
 				} else {
 					return fmt.Errorf("calling LLM provider for %s: %w", f.Filename, err)
 				}
 			}
+
+			// Record usage for the summary.
+			stats.add(usage)
 
 			// Record assistant reply only for non-chunk scopes (chunk scope
 			// intentionally discards history between calls).
@@ -600,6 +609,9 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	} else {
 		log.Print("No issues found to report.\n")
 	}
+
+	// Token usage summary.
+	stats.report(log)
 
 	return nil
 }

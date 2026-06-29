@@ -18,12 +18,25 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// Usage reports the token cost of a single completion. PromptTokens and
+// CompletionTokens are taken from the provider's response when available;
+// otherwise they are coarse estimates. Estimated is true when any field
+// was derived from EstimateTokens rather than reported by the API.
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	Estimated        bool
+}
+
 // Provider represents an abstract LLM backend.
 type Provider interface {
-	Complete(ctx context.Context, messages []Message) (string, error)
+	Complete(ctx context.Context, messages []Message) (string, Usage, error)
 	// MaxPromptTokens returns the maximum prompt size in tokens that ragrev
 	// will pack into a single call to this provider.
 	MaxPromptTokens() int
+	// Model returns the configured model identifier.
+	Model() string
 }
 
 // NewProvider returns a Provider implementation configured per backendCfg.

@@ -23,6 +23,11 @@ type chatResponse struct {
 	Choices []struct {
 		Message Message `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 }
 
 type openaiClient struct {
@@ -45,7 +50,9 @@ func newOpenAIClient(url, model, token string, maxTokens int, log *logger.Logger
 
 func (c *openaiClient) MaxPromptTokens() int { return c.maxTokens }
 
-func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string, error) {
+func (c *openaiClient) Model() string { return c.model }
+
+func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string, Usage, error) {
 	reqBody := chatRequest{
 		Model:    c.model,
 		Messages: messages,
@@ -53,7 +60,7 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 
 	b, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", Usage{}, err
 	}
 
 	maxRetries := 5
@@ -62,7 +69,7 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(b))
 		if err != nil {
-			return "", err
+			return "", Usage{}, err
 		}
 
 		req.Header.Set("Content-Type", "application/json")
@@ -72,13 +79,13 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return "", err
+			return "", Usage{}, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 			resp.Body.Close()
 			if attempt == maxRetries {
-				return "", fmt.Errorf("API error: rate limit exceeded after %d retries", maxRetries)
+				return "", Usage{}, fmt.Errorf("API error: rate limit exceeded after %d retries", maxRetries)
 			}
 			delay := backoff
 			if headerVal := resp.Header.Get("Retry-After"); headerVal != "" {
@@ -94,7 +101,7 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 				backoff *= 2
 				continue
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return "", Usage{}, ctx.Err()
 			}
 		}
 
@@ -115,29 +122,47 @@ func (c *openaiClient) Complete(ctx context.Context, messages []Message) (string
 					backoff *= 2
 					continue
 				case <-ctx.Done():
-					return "", ctx.Err()
+					return "", Usage{}, ctx.Err()
 				}
 			}
 
 			if strings.Contains(string(body), "tokens_limit_reached") {
-				return "", fmt.Errorf("tokens_limit_reached: %s", string(body))
+				return "", Usage{}, fmt.Errorf("tokens_limit_reached: %s", string(body))
 			}
 
-			return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+			return "", Usage{}, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 		}
 
 		var res chatResponse
 		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 			resp.Body.Close()
-			return "", err
+			return "", Usage{}, err
 		}
 		resp.Body.Close()
 
 		if len(res.Choices) == 0 {
-			return "", fmt.Errorf("no response choices returned")
+			return "", Usage{}, fmt.Errorf("no response choices returned")
 		}
-		return res.Choices[0].Message.Content, nil
+		content := res.Choices[0].Message.Content
+		usage := Usage{
+			PromptTokens:     res.Usage.PromptTokens,
+			CompletionTokens: res.Usage.CompletionTokens,
+			TotalTokens:      res.Usage.TotalTokens,
+		}
+		// Fall back to estimates if the provider omitted usage data.
+		if usage.PromptTokens == 0 {
+			usage.PromptTokens = EstimateMessagesTokens(messages)
+			usage.Estimated = true
+		}
+		if usage.CompletionTokens == 0 {
+			usage.CompletionTokens = EstimateTokens(content)
+			usage.Estimated = true
+		}
+		if usage.TotalTokens == 0 {
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		}
+		return content, usage, nil
 	}
 
-	return "", fmt.Errorf("max retries exceeded without a valid response")
+	return "", Usage{}, fmt.Errorf("max retries exceeded without a valid response")
 }
