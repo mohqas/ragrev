@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -117,6 +118,120 @@ func TestEnsureExists(t *testing.T) {
 	}
 	if cfg2.BaseBranch != cfg.BaseBranch {
 		t.Errorf("second call returned different config")
+	}
+}
+
+func TestUpdateNewFile(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg, warnings, err := Update(dir)
+	if err != nil {
+		t.Fatalf("Update on missing file: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for new file, got %v", warnings)
+	}
+	if cfg.BaseBranch != "master" {
+		t.Errorf("BaseBranch = %q, want master", cfg.BaseBranch)
+	}
+	if _, err := os.Stat(Path(dir)); err != nil {
+		t.Errorf("config file not created: %v", err)
+	}
+}
+
+func TestUpdateMergesNewDefaults(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a minimal config that is missing several default fields.
+	minimal := "repo: owner/repo\nbase_branch: main\n"
+	if err := os.WriteFile(Path(dir), []byte(minimal), 0644); err != nil {
+		t.Fatalf("writing minimal config: %v", err)
+	}
+
+	cfg, warnings, err := Update(dir)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+
+	// New defaults should have been merged in.
+	if cfg.ReviewScope == "" {
+		t.Errorf("ReviewScope should be filled in from defaults")
+	}
+	if cfg.Backend == "" {
+		t.Errorf("Backend should be filled in from defaults")
+	}
+
+	// Re-read the file to confirm defaults were written.
+	reloaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reloading: %v", err)
+	}
+	if reloaded.ReviewScope != cfg.ReviewScope {
+		t.Errorf("ReviewScope not persisted after Update")
+	}
+}
+
+func TestUpdateWarnsOnRemovedFields(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a config with a field that no longer exists.
+	stale := "repo: owner/repo\nbase_branch: main\nold_removed_field: somevalue\n"
+	if err := os.WriteFile(Path(dir), []byte(stale), 0644); err != nil {
+		t.Fatalf("writing stale config: %v", err)
+	}
+
+	cfg, warnings, err := Update(dir)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Error("expected a warning about removed field, got none")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "old_removed_field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warning did not mention the removed field; warnings: %v", warnings)
+	}
+
+	// The config should still load cleanly.
+	if cfg.Repo != "owner/repo" {
+		t.Errorf("Repo = %q, want owner/repo", cfg.Repo)
+	}
+}
+
+func TestUpdatePreservesUserValues(t *testing.T) {
+	dir := t.TempDir()
+
+	original := Default()
+	original.Repo = "my-org/my-repo"
+	original.BaseBranch = "develop"
+	original.MinCommentLen = 42
+	if err := Save(dir, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg, warnings, err := Update(dir)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if cfg.Repo != "my-org/my-repo" {
+		t.Errorf("Repo = %q, want my-org/my-repo", cfg.Repo)
+	}
+	if cfg.BaseBranch != "develop" {
+		t.Errorf("BaseBranch = %q, want develop", cfg.BaseBranch)
+	}
+	if cfg.MinCommentLen != 42 {
+		t.Errorf("MinCommentLen = %d, want 42", cfg.MinCommentLen)
 	}
 }
 

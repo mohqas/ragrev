@@ -8,6 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -231,6 +234,78 @@ func EnsureExists(ragrevDir string) (Config, string, error) {
 		return cfg, p, err
 	}
 	return cfg, p, nil
+}
+
+// knownTopLevelKeys returns the set of YAML key names defined by the Config
+// struct, derived from struct field tags so it stays in sync automatically.
+func knownTopLevelKeys() map[string]struct{} {
+	t := reflect.TypeOf(Config{})
+	keys := make(map[string]struct{}, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.SplitN(tag, ",", 2)[0]
+		keys[name] = struct{}{}
+	}
+	return keys
+}
+
+// Update loads an existing config file, merges in any new default values
+// (added in newer ragrev versions), and re-writes the file so the user's
+// copy always stays up-to-date.  Unknown keys that are no longer part of
+// the Config schema are reported as warnings but do not block the update.
+// If the config file does not exist it is created with defaults (same
+// behaviour as EnsureExists for a first run).
+//
+// Returns the merged Config, a (possibly empty) list of human-readable
+// warnings about unrecognised/removed fields, and any hard error.
+func Update(ragrevDir string) (Config, []string, error) {
+	p := Path(ragrevDir)
+
+	data, readErr := os.ReadFile(p)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			// First run — create with defaults, no warnings.
+			cfg := Default()
+			if err := Save(ragrevDir, cfg); err != nil {
+				return cfg, nil, err
+			}
+			return cfg, nil, nil
+		}
+		return Config{}, nil, fmt.Errorf("reading config: %w", readErr)
+	}
+
+	// Detect unknown / removed top-level keys.
+	var warnings []string
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err == nil {
+		known := knownTopLevelKeys()
+		var unknown []string
+		for key := range raw {
+			if _, ok := known[key]; !ok {
+				unknown = append(unknown, key)
+			}
+		}
+		sort.Strings(unknown)
+		for _, key := range unknown {
+			warnings = append(warnings, fmt.Sprintf("config field %q is no longer recognised and will be ignored", key))
+		}
+	}
+
+	// Load with defaults merged in.
+	cfg, err := Load(ragrevDir)
+	if err != nil {
+		return cfg, warnings, err
+	}
+
+	// Re-save so any newly added default fields appear in the file.
+	if err := Save(ragrevDir, cfg); err != nil {
+		return cfg, warnings, fmt.Errorf("updating config: %w", err)
+	}
+
+	return cfg, warnings, nil
 }
 
 // Edit opens the config file in the user's default editor.

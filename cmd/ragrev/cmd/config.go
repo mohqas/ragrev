@@ -18,11 +18,17 @@ var configCmd = &cobra.Command{
 			return fmt.Errorf("could not find .git directory: %w", err)
 		}
 
-		// Auto-detect and save repo on first run
-		cfg, _, err := config.EnsureExists(dir)
+		// Load existing config, merge new defaults, and re-save.
+		// Unknown / removed fields are surfaced as warnings.
+		cfg, warnings, err := config.Update(dir)
 		if err != nil {
 			return err
 		}
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
+
+		// Auto-detect and save repo on first run.
 		if cfg.Repo == "" {
 			if repo, err := gitutil.DetectRepo(); err == nil {
 				cfg.Repo = repo
