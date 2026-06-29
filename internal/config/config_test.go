@@ -29,6 +29,7 @@ func TestSaveAndLoad(t *testing.T) {
 	cfg.BaseBranch = "main"
 	cfg.MinCommentLen = 15
 	cfg.Backend = "gemini"
+	cfg.ReviewPrompt = "Only review for security issues."
 	cfg.Backends = map[string]BackendConfig{
 		"gemini": {
 			Model:    "gemini-2",
@@ -77,6 +78,9 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if loaded.Backends["gemini"].Model != "gemini-2" {
 		t.Errorf("Backend Model = %q, want gemini-2", loaded.Backends["gemini"].Model)
+	}
+	if loaded.ReviewPrompt != "Only review for security issues." {
+		t.Errorf("ReviewPrompt = %q, want %q", loaded.ReviewPrompt, "Only review for security issues.")
 	}
 }
 

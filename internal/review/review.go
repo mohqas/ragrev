@@ -41,9 +41,33 @@ type Params struct {
 	Submit             bool
 	// Scope overrides Config.ReviewScope when non-empty.
 	Scope ScopeMode
+	// ReviewPrompt overrides Config.ReviewPrompt when non-empty.
+	ReviewPrompt string
 }
 
 var snippetRe = regexp.MustCompile(`(?s)<snippet>\n?(.*?)\n?</snippet>`)
+
+// buildSystemPrompt assembles the review system message. The current-date
+// sentence is always retained. When prompt is non-empty it overrides the
+// built-in review instructions (including the reviewer persona preamble and
+// the snippet/LGTM directives); otherwise the default instructions are used.
+func buildSystemPrompt(prompt string, now time.Time) string {
+	datePart := fmt.Sprintf("The current date is %s. ", now.Format("January 2, 2006"))
+	if prompt != "" {
+		return datePart + prompt
+	}
+	return "You are a senior code reviewer acting as the repository code owner. " + datePart +
+		"You are reviewing an entire Pull Request that may span multiple files. " +
+		"Each file's full content is introduced with a header in the form `===== FILE: <path> =====` followed by the file body. " +
+		"Diff chunks for review are prefixed with `FILE: <path>` and `CHUNK: <name>` so you always know which file they belong to, regardless of the order chunks arrive. " +
+		"In a unified diff, lines starting with '+' are additions and '-' are removals; context lines are shown for reference only — do not comment on them. " +
+		"Focus exclusively on the added lines, but freely cross-reference any file in this PR to spot inconsistencies. " +
+		"Flag real issues: logic errors, missing error handling, naming inconsistencies, and style violations. " +
+		"If a type or function appears missing in a chunk, ALWAYS check the FULL FILE CONTEXT (or context from other files in this PR) before flagging it. " +
+		"If an example past review is highly relevant, optionally mention it. " +
+		"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text.\n" +
+		"Be concise. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else."
+}
 
 // Run executes the review for a specific PR or local commits.
 func Run(ctx context.Context, params Params, log *logger.Logger) error {
@@ -175,19 +199,18 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	}
 
 	// 2. Build the shared system message
+	// Resolve the prompt override (param overrides config).
+	reviewPrompt := params.ReviewPrompt
+	if reviewPrompt == "" {
+		reviewPrompt = cfg.ReviewPrompt
+	}
+	if reviewPrompt != "" {
+		log.Verbose("Using custom review prompt override\n")
+	}
+
 	sysMsg := llm.Message{
-		Role: "system",
-		Content: fmt.Sprintf("You are a senior code reviewer acting as the repository code owner. The current date is %s. ", time.Now().Format("January 2, 2006")) +
-			"You are reviewing an entire Pull Request that may span multiple files. " +
-			"Each file's full content is introduced with a header in the form `===== FILE: <path> =====` followed by the file body. " +
-			"Diff chunks for review are prefixed with `FILE: <path>` and `CHUNK: <name>` so you always know which file they belong to, regardless of the order chunks arrive. " +
-			"In a unified diff, lines starting with '+' are additions and '-' are removals; context lines are shown for reference only — do not comment on them. " +
-			"Focus exclusively on the added lines, but freely cross-reference any file in this PR to spot inconsistencies. " +
-			"Flag real issues: logic errors, missing error handling, naming inconsistencies, and style violations. " +
-			"If a type or function appears missing in a chunk, ALWAYS check the FULL FILE CONTEXT (or context from other files in this PR) before flagging it. " +
-			"If an example past review is highly relevant, optionally mention it. " +
-			"If your review applies ONLY to a specific section of the chunk, wrap those literal lines of code exactly as they appear in the diff inside <snippet> and </snippet> tags at the start of your response. Ensure the snippet exactly matches the diff text.\n" +
-			"Be concise. If you find no issues in a chunk, respond with exactly LGTM_NO_ISSUES and nothing else.",
+		Role:    "system",
+		Content: buildSystemPrompt(reviewPrompt, time.Now()),
 	}
 
 	if agentsMsg != "" {

@@ -58,6 +58,13 @@ type Config struct {
 	//   - "chunk" : send only the chunk diff plus the relevant file content per call,
 	//               discarding history between chunks
 	ReviewScope string `yaml:"review_scope,omitempty"`
+
+	// ReviewPrompt overrides the built-in review system instructions when
+	// non-empty. The current-date prefix is always retained, but the default
+	// snippet/LGTM instructions are dropped, which yields larger output and
+	// less accurate comment locations. Empty (default) keeps the built-in
+	// prompt. Use with caution.
+	ReviewPrompt string `yaml:"review_prompt,omitempty"`
 }
 
 // Duration wraps time.Duration for YAML marshaling as a human-readable string.

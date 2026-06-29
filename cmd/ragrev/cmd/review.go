@@ -163,6 +163,7 @@ func init() {
 	reviewCmd.Flags().String("backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
 	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub (PR mode only)")
 	reviewCmd.Flags().String("scope", "", "Review context scope: pr (default, preload entire PR), file (preload one file at a time), or chunk (only the chunk + its file per call)")
+	reviewCmd.Flags().String("prompt", "", "Override the built-in review system prompt (override config). WARNING: impacts results — larger output and less accurate comment locations")
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	reviewCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
 	_ = reviewCmd.Flags().MarkHidden("debug")
