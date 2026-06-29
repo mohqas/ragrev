@@ -49,10 +49,10 @@ func (s *usageStats) report(log *logger.Logger) {
 		log.Print(" | skipped: %d", s.skipped)
 	}
 	log.Print("\n")
-	log.Print("Tokens%s — prompt: %s, completion: %s, total: %s\n",
+	log.Print("Tokens%s — prompt: %s, output: %s, total: %s\n",
 		note, fmtInt(s.promptTokens), fmtInt(s.completionTokens), fmtInt(s.totalTokens))
 	if s.calls > 0 {
-		log.Verbose("Average per call — prompt: %d, completion: %d, total: %d\n",
+		log.Verbose("Average per call — prompt: %d, output: %d, total: %d\n",
 			s.promptTokens/s.calls, s.completionTokens/s.calls, s.totalTokens/s.calls)
 	}
 }
