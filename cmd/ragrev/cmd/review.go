@@ -12,6 +12,7 @@ import (
 	"github.com/canonical/ragrev/internal/config"
 	"github.com/canonical/ragrev/internal/gitutil"
 	"github.com/canonical/ragrev/internal/logger"
+	"github.com/canonical/ragrev/internal/output"
 	"github.com/canonical/ragrev/internal/review"
 	"github.com/spf13/cobra"
 )
@@ -129,6 +130,9 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 
 		scopeFlag, _ := cmd.Flags().GetString("scope")
 
+		plainFlag, _ := cmd.Flags().GetBool("plain")
+		printer := output.New(os.Stdout, cfg.OutputTheme, plainFlag)
+
 		params := review.Params{
 			DBPath:             dbPath,
 			CollectionName:     collection,
@@ -139,6 +143,7 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 			UseAgentsOverrides: useAgents,
 			Submit:             submit,
 			Scope:              review.ScopeMode(scopeFlag),
+			Printer:            printer,
 		}
 
 		verbose, _ := cmd.Flags().GetBool("verbose")
@@ -167,4 +172,5 @@ func init() {
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	reviewCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
 	_ = reviewCmd.Flags().MarkHidden("debug")
+	reviewCmd.Flags().Bool("plain", false, "Disable colors and rich formatting (auto-enabled when stdout is not a TTY)")
 }

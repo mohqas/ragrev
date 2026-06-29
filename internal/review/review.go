@@ -16,6 +16,7 @@ import (
 	"github.com/canonical/ragrev/internal/gitutil"
 	"github.com/canonical/ragrev/internal/llm"
 	"github.com/canonical/ragrev/internal/logger"
+	"github.com/canonical/ragrev/internal/output"
 	"github.com/canonical/ragrev/internal/parser"
 	"github.com/canonical/ragrev/internal/vectordb"
 	gh "github.com/google/go-github/v72/github"
@@ -43,6 +44,9 @@ type Params struct {
 	Scope ScopeMode
 	// ReviewPrompt overrides Config.ReviewPrompt when non-empty.
 	ReviewPrompt string
+	// Printer is the rich-output renderer. When nil a default plain printer
+	// writing to os.Stdout is used.
+	Printer *output.Printer
 }
 
 var snippetRe = regexp.MustCompile(`(?s)<snippet>\n?(.*?)\n?</snippet>`)
@@ -72,6 +76,12 @@ func buildSystemPrompt(prompt string, now time.Time) string {
 // Run executes the review for a specific PR or local commits.
 func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	cfg := params.Config
+
+	// Resolve printer — fall back to a plain printer on stdout.
+	printer := params.Printer
+	if printer == nil {
+		printer = output.New(os.Stdout, cfg.OutputTheme, true)
+	}
 
 	// Validate mode-specific requirements
 	if params.Mode == ModePR && cfg.Repo == "" {
@@ -345,6 +355,9 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			continue
 		}
 
+		// Print file banner before processing so the user sees progress.
+		printer.PrintFileHeader(f.Filename)
+
 		fullContent := loadContent(f.Filename)
 
 		p := parser.ForFile(f.Filename)
@@ -537,20 +550,32 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 					file: f.Filename,
 				})
 			}
-			log.Verbose("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
+			log.Debug("--- Review for %s chunk %s ---\n%s\n\n", f.Filename, chunk.Name, chunkReview)
 
 			cleanedReview := strings.TrimSpace(chunkReview)
+
+			// Always extract the snippet for display and for the submit path.
+			var snippetText string
+			matches := snippetRe.FindStringSubmatch(cleanedReview)
+			if len(matches) > 1 {
+				snippetText = matches[1]
+				cleanedReview = snippetRe.ReplaceAllString(cleanedReview, "")
+				cleanedReview = strings.TrimSpace(cleanedReview)
+			}
+
 			if !strings.Contains(cleanedReview, "LGTM_NO_ISSUES") {
+				// Stream the formatted output immediately.
+				printer.PrintChunkHeader(chunk.Name, chunk.Kind)
+				printer.PrintComment(snippetText, cleanedReview)
+
 				fileReviewParts = append(fileReviewParts, fmt.Sprintf("#### `%s`\n%s", chunk.Name, cleanedReview))
 
 				if params.Submit {
 					startLine := chunk.StartLine
 					commentLine := chunk.EndLine
 
-					// Check for sub-chunk snippet matching
-					matches := snippetRe.FindStringSubmatch(cleanedReview)
-					if len(matches) > 1 {
-						snippetText := matches[1]
+					// Refine line range using the extracted snippet.
+					if snippetText != "" {
 						idx := strings.Index(chunk.Patch, snippetText)
 						if idx != -1 {
 							linesBefore := strings.Count(chunk.Patch[:idx], "\n")
@@ -572,14 +597,11 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 								commentLine = eLine
 							}
 						}
-						cleanedReview = snippetRe.ReplaceAllString(cleanedReview, "")
-						cleanedReview = strings.TrimSpace(cleanedReview)
 					}
 
 					if commentLine == 0 {
 						commentLine = 1
 					}
-					// Variables required for pointer fields
 					filenamePath := f.Filename
 					side := "RIGHT"
 					commentBody := cleanedReview
@@ -611,8 +633,6 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	}
 
 	if len(reviewParts) > 0 {
-		log.Print("\n--- Full Review ---\n\n")
-		log.Print("%s\n", strings.Join(reviewParts, "\n\n---\n\n"))
 
 		if params.Submit && len(draftComments) > 0 {
 			log.Print("Submitting pending review with %d comments...\n", len(draftComments))
@@ -630,7 +650,7 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 			log.Print("Review submitted as PENDING.\n")
 		}
 	} else {
-		log.Print("No issues found to report.\n")
+		printer.PrintNoIssues()
 	}
 
 	// Token usage summary.

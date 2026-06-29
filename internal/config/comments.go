@@ -38,6 +38,7 @@ func marshalWithComments(cfg Config) ([]byte, error) {
 		{"rate_delay", "Delay between PRs while ingesting (Go duration: 500ms, 1s, 2m).", time.Duration(cfg.RateDelay).String()},
 		{"review_scope", "Context per review: pr | file | chunk.", cfg.ReviewScope},
 		{"review_prompt", "Override the built-in review system prompt. Empty = default. WARNING: impacts results — expect larger output and less accurate comment locations. Use with caution.", cfg.ReviewPrompt},
+		{"output_theme", "Syntax-highlight theme for CLI output (e.g. github, monokai, github-dark). Options: https://xyproto.github.io/splash/docs/all.html", cfg.OutputTheme},
 		{"backend", "Active backend; must match a key under 'backends'.", cfg.Backend},
 	}
 	for _, e := range entries {

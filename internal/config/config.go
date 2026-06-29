@@ -68,6 +68,11 @@ type Config struct {
 	// less accurate comment locations. Empty (default) keeps the built-in
 	// prompt. Use with caution.
 	ReviewPrompt string `yaml:"review_prompt,omitempty"`
+
+	// OutputTheme is the Chroma syntax-highlight theme used for rich CLI
+	// output. Any theme name listed at https://xyproto.github.io/splash/docs/all.html
+	// is accepted. Defaults to "github".
+	OutputTheme string `yaml:"output_theme,omitempty"`
 }
 
 // Duration wraps time.Duration for YAML marshaling as a human-readable string.
@@ -99,6 +104,7 @@ func Default() Config {
 		MinSimilarityScore: 0.5,
 		RateDelay:          Duration(100 * time.Millisecond),
 		ReviewScope:        "pr",
+		OutputTheme:        "github",
 		Backend:            "copilot",
 		Backends: map[string]BackendConfig{
 			"github": {
