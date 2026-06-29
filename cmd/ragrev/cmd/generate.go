@@ -91,4 +91,5 @@ func init() {
 	generateCmd.Flags().Duration("rate-delay", 0, "Delay between PR processing (override config)")
 	generateCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	generateCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
+	_ = generateCmd.Flags().MarkHidden("debug")
 }

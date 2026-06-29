@@ -165,4 +165,5 @@ func init() {
 	reviewCmd.Flags().String("scope", "", "Review context scope: pr (default, preload entire PR), file (preload one file at a time), or chunk (only the chunk + its file per call)")
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	reviewCmd.Flags().Bool("debug", false, "Enable debug output (implies -v)")
+	_ = reviewCmd.Flags().MarkHidden("debug")
 }
