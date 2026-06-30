@@ -115,10 +115,12 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 	if store.Count() == 0 {
 		// Distinguish "never initialized" from "initialized but no past comments".
 		if !vectordb.Initialized(params.DBPath) {
-			return fmt.Errorf("no review index found; run 'ragrev init' first")
+			log.Print("Warning: no review index found (run 'ragrev init' to build one); " +
+				"proceeding with a generic review without historical context.\n")
+		} else {
+			log.Print("Review index is empty (no past review comments found); " +
+				"proceeding with a generic review without historical context.\n")
 		}
-		log.Print("Review index is empty (no past review comments found); " +
-			"proceeding with a generic review without historical context.\n")
 	}
 
 	// Resolve scope (param overrides config; config falls back to "pr").
