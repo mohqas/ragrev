@@ -16,6 +16,7 @@ Traditional AI code reviewers often provide generic advice. `ragrev` changes thi
 - **Persona Filtering**: Review using the "voice" of specific team members. You can filter historical context during the review to only include comments from specific reviewers.
 - **Incremental Review Index**: The review index is built once and updated incrementally. Subsequent runs of the `generate` command only fetch and index new PRs.
 - **Per-Repo Configuration**: Data and settings are stored within each repository's `.git` directory, ensuring projects remain isolated and don't conflict.
+- **Global Configuration**: A per-user global config seeds newly created per-repo configs, so your preferred backend, theme, and other preferences carry over automatically to every new project.
 - **Rich Syntax-Highlighted Output**: Review results are rendered with syntax highlighting. The colour theme is configurable via `output_theme` in the config file (any [Chroma theme](https://xyproto.github.io/splash/docs/all.html) is accepted; default: `github`).
 - **Token Usage Summary**: After each review, a concise token-cost breakdown is printed — model name, number of LLM calls, retries, skipped chunks, and prompt/output/total token counts with thousands separators.
 - **Custom Review Prompt**: Override the built-in system prompt with your own via the `review_prompt` config key, giving full control over the LLM's review instructions.
@@ -108,13 +109,47 @@ ragrev review 123 --update-index
 
 ### 4. Configuration
 
-Customize your backend, repo settings, and default reviewers:
+#### Per-repo config
+
+Customize your backend, repo settings, and default reviewers for the current repository:
 
 ```bash
 ragrev config
 ```
 
-Settings are stored in `.git/ragrev/config.yml` and are specific to the current repository. Notable options added recently:
+Settings are stored in `.git/ragrev/config.yml` and are specific to the current repository. They take precedence over the global config for that repo.
+
+#### Global config
+
+A per-user global config applies default values to **every** repository.  It is also the config shown when you run `ragrev config` outside a git repo.  The fields `repo`, `base_branch`, and `reviewers` are not stored here — they are always per-repo.
+
+```bash
+# Open the global config in your editor from anywhere (inside or outside a repo)
+ragrev config --global
+
+# Same effect when run outside a git repo
+ragrev config
+```
+
+**Config file locations**
+
+| Environment | Path |
+| :--- | :--- |
+| Snap (strict confinement) | `~/snap/ragrev/common/config.yml` — writable without any extra interface connections |
+| Standard install | `~/.config/ragrev/config.yml` (respects `$XDG_CONFIG_HOME`) |
+| Fallback (no `$XDG_CONFIG_HOME`) | `~/.ragrev/config.yml` |
+
+**Config precedence** (highest wins):
+
+```
+CLI flags  >  per-repo .git/ragrev/config.yml  >  global config.yml  >  built-in defaults
+```
+
+**Seeding new repos from global**
+
+When a per-repo config is created for the first time (e.g. on the first `ragrev init` or `ragrev review` in a new checkout) its non-repo fields are automatically seeded from the global config — so your preferred `backend`, `output_theme`, `backends`, etc. are already set without any extra action.
+
+**Notable config keys**
 
 | Key | Description |
 | :--- | :--- |
@@ -122,6 +157,11 @@ Settings are stored in `.git/ragrev/config.yml` and are specific to the current 
 | `backends.<name>.model` | Model identifier for that backend (e.g. `anthropic/claude-opus-4` for OpenRouter). |
 | `output_theme` | Syntax-highlight theme for review output (e.g. `github`, `monokai`, `github-dark`). |
 | `review_prompt` | Replaces the built-in system prompt. Leave empty to use the default. |
+| `review_scope` | Context preloaded per review: `pr` (default), `file`, or `chunk`. |
+| `min_similarity_score` | Minimum vector-similarity (0–1) for a RAG result to be included. |
+| `max_examples` | Maximum number of similar past review threads included per chunk. |
+
+
 
 ## Requirements
 

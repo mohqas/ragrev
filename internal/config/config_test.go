@@ -139,6 +139,71 @@ func TestUpdateNewFile(t *testing.T) {
 	}
 }
 
+func TestUpdateSeededFirstRun(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	// Set up global config with a custom theme.
+	gCfg := Default()
+	gCfg.OutputTheme = "monokai"
+	gCfg.Backend = "ollama"
+	if err := SaveGlobal(globalDir, gCfg); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+
+	// First call: repo config does not exist — UpdateSeeded should seed from global.
+	cfg, warnings, err := UpdateSeeded(repoDir, globalDir)
+	if err != nil {
+		t.Fatalf("UpdateSeeded (first run): %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings on first run: %v", warnings)
+	}
+	if cfg.OutputTheme != "monokai" {
+		t.Errorf("OutputTheme = %q, want monokai (seeded from global)", cfg.OutputTheme)
+	}
+	if cfg.Backend != "ollama" {
+		t.Errorf("Backend = %q, want ollama (seeded from global)", cfg.Backend)
+	}
+
+	// Confirm the seeded values were written to disk.
+	reloaded, err := Load(repoDir)
+	if err != nil {
+		t.Fatalf("Load after UpdateSeeded: %v", err)
+	}
+	if reloaded.OutputTheme != "monokai" {
+		t.Errorf("OutputTheme not persisted: got %q", reloaded.OutputTheme)
+	}
+}
+
+func TestUpdateSeededExistingFileNotReseeded(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	// Write global config.
+	gCfg := Default()
+	gCfg.Backend = "ollama"
+	if err := SaveGlobal(globalDir, gCfg); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+
+	// Create the repo config first with a different backend.
+	repoCfg := Default()
+	repoCfg.Backend = "gemini"
+	if err := Save(repoDir, repoCfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// UpdateSeeded should NOT overwrite the existing per-repo value.
+	cfg, _, err := UpdateSeeded(repoDir, globalDir)
+	if err != nil {
+		t.Fatalf("UpdateSeeded (existing file): %v", err)
+	}
+	if cfg.Backend != "gemini" {
+		t.Errorf("Backend = %q, existing per-repo value should win over global", cfg.Backend)
+	}
+}
+
 func TestUpdateMergesNewDefaults(t *testing.T) {
 	dir := t.TempDir()
 
@@ -240,6 +305,157 @@ func TestPath(t *testing.T) {
 	want := filepath.Join("/some/dir", "config.yml")
 	if p != want {
 		t.Errorf("Path = %q, want %q", p, want)
+	}
+}
+
+func TestGlobalPath(t *testing.T) {
+	p := GlobalPath("/some/global")
+	want := filepath.Join("/some/global", "config.yml")
+	if p != want {
+		t.Errorf("GlobalPath = %q, want %q", p, want)
+	}
+}
+
+func TestSaveGlobalOmitsRepoFields(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Default()
+	cfg.Repo = "owner/repo"
+	cfg.BaseBranch = "main"
+	cfg.Reviewers = []string{"alice"}
+	cfg.Backend = "gemini"
+
+	if err := SaveGlobal(dir, cfg); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+
+	data, _ := os.ReadFile(GlobalPath(dir))
+	content := string(data)
+	if strings.Contains(content, "owner/repo") {
+		t.Error("SaveGlobal should not persist Repo")
+	}
+	if strings.Contains(content, "alice") {
+		t.Error("SaveGlobal should not persist Reviewers")
+	}
+	// Backend is a non-repo field and should be present
+	if !strings.Contains(content, "gemini") {
+		t.Error("SaveGlobal should persist Backend")
+	}
+}
+
+func TestEnsureGlobalExists(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg, p, err := EnsureGlobalExists(dir)
+	if err != nil {
+		t.Fatalf("EnsureGlobalExists: %v", err)
+	}
+	if cfg.Backend == "" {
+		t.Errorf("expected non-empty Backend default")
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("global config file not created at %s", p)
+	}
+
+	// Second call should load existing file without re-creating.
+	cfg2, _, err := EnsureGlobalExists(dir)
+	if err != nil {
+		t.Fatalf("EnsureGlobalExists second call: %v", err)
+	}
+	if cfg2.Backend != cfg.Backend {
+		t.Errorf("second call returned different Backend")
+	}
+}
+
+func TestApplyGlobal(t *testing.T) {
+	base := Default()
+	global := Default()
+	global.Backend = "ollama"
+	global.OutputTheme = "monokai"
+	global.Repo = "should-not-appear"
+	global.BaseBranch = "should-not-appear"
+	global.Reviewers = []string{"should-not-appear"}
+
+	result := ApplyGlobal(base, global)
+	if result.Backend != "ollama" {
+		t.Errorf("Backend = %q, want ollama", result.Backend)
+	}
+	if result.OutputTheme != "monokai" {
+		t.Errorf("OutputTheme = %q, want monokai", result.OutputTheme)
+	}
+	if result.Repo != "" {
+		t.Errorf("ApplyGlobal should not copy Repo, got %q", result.Repo)
+	}
+	if result.BaseBranch != "master" {
+		t.Errorf("ApplyGlobal should not copy BaseBranch from global, got %q", result.BaseBranch)
+	}
+	if len(result.Reviewers) != 0 {
+		t.Errorf("ApplyGlobal should not copy Reviewers, got %v", result.Reviewers)
+	}
+}
+
+func TestEnsureExistsSeeded(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	// Set up a global config with a custom backend.
+	gCfg := Default()
+	gCfg.Backend = "ollama"
+	if err := SaveGlobal(globalDir, gCfg); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+
+	// First call: repo config does not exist yet — should be seeded from global.
+	cfg, _, err := EnsureExistsSeeded(repoDir, globalDir)
+	if err != nil {
+		t.Fatalf("EnsureExistsSeeded: %v", err)
+	}
+	if cfg.Backend != "ollama" {
+		t.Errorf("Backend = %q, want ollama (seeded from global)", cfg.Backend)
+	}
+
+	// Second call: repo config already exists — global should not override.
+	cfg2, _, err := EnsureExistsSeeded(repoDir, globalDir)
+	if err != nil {
+		t.Fatalf("EnsureExistsSeeded second call: %v", err)
+	}
+	if cfg2.Backend != "ollama" {
+		t.Errorf("Backend = %q on second call, want ollama", cfg2.Backend)
+	}
+}
+
+func TestEnsureExistsSeededNoGlobal(t *testing.T) {
+	repoDir := t.TempDir()
+	globalDir := t.TempDir() // global dir exists but has no config.yml
+
+	cfg, _, err := EnsureExistsSeeded(repoDir, globalDir)
+	if err != nil {
+		t.Fatalf("EnsureExistsSeeded without global file: %v", err)
+	}
+	// Should fall back to Default()
+	if cfg.Backend != Default().Backend {
+		t.Errorf("Backend = %q, want default %q", cfg.Backend, Default().Backend)
+	}
+}
+
+func TestLoadGlobalOrDefault(t *testing.T) {
+	dir := t.TempDir()
+
+	// No file → returns Default()
+	cfg := LoadGlobalOrDefault(dir)
+	if cfg.Backend != Default().Backend {
+		t.Errorf("LoadGlobalOrDefault (no file): Backend = %q, want default", cfg.Backend)
+	}
+
+	// Write a global config
+	custom := Default()
+	custom.Backend = "gemini"
+	if err := SaveGlobal(dir, custom); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+
+	cfg = LoadGlobalOrDefault(dir)
+	if cfg.Backend != "gemini" {
+		t.Errorf("LoadGlobalOrDefault (file exists): Backend = %q, want gemini", cfg.Backend)
 	}
 }
 

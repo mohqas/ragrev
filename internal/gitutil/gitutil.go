@@ -149,6 +149,25 @@ func DBPath() (string, error) {
 	return filepath.Join(gitDir, "ragrev"), nil
 }
 
+// GlobalDir returns the per-user ragrev configuration directory.
+//
+// Under a strictly confined snap, $SNAP_USER_COMMON is used — it is writable
+// without any extra interface plugs and survives snap refreshes.
+// Otherwise the XDG-compliant os.UserConfigDir()/ragrev (~/.config/ragrev) is
+// used, with $HOME/.ragrev as a final fallback.
+func GlobalDir() string {
+	if snap := os.Getenv("SNAP_USER_COMMON"); snap != "" {
+		return snap
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "ragrev")
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		return filepath.Join(home, ".ragrev")
+	}
+	return ".ragrev"
+}
+
 // ChangedFile represents a file changed in a git commit or range.
 type ChangedFile struct {
 	Filename string

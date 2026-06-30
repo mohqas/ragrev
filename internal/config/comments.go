@@ -75,6 +75,70 @@ func marshalWithComments(cfg Config) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// marshalGlobalWithComments is like marshalWithComments but omits the
+// repo-specific fields (repo, base_branch, reviewers) that are not stored in
+// the global config file.
+func marshalGlobalWithComments(cfg Config) ([]byte, error) {
+	root := &yaml.Node{Kind: yaml.MappingNode}
+
+	add := func(key, comment string, value interface{}) error {
+		k := &yaml.Node{Kind: yaml.ScalarNode, Value: key, HeadComment: comment}
+		v := &yaml.Node{}
+		if err := v.Encode(value); err != nil {
+			return err
+		}
+		root.Content = append(root.Content, k, v)
+		return nil
+	}
+
+	entries := []struct {
+		key, comment string
+		value        interface{}
+	}{
+		{"authors", "Trusted reviewer usernames to ingest. Empty = all.", cfg.Authors},
+		{"max_examples", "Max similar past reviews included per chunk.", cfg.MaxExamples},
+		{"min_similarity_score", "Minimum vector-similarity score (0.0–1.0) to include a DB result as review context.", cfg.MinSimilarityScore},
+		{"min_comment_len", "Skip past comments shorter than this many chars.", cfg.MinCommentLen},
+		{"rate_delay", "Delay between PRs while ingesting (Go duration: 500ms, 1s, 2m).", time.Duration(cfg.RateDelay).String()},
+		{"review_scope", "Context per review: pr | file | chunk.", cfg.ReviewScope},
+		{"review_prompt", "Override the built-in review system prompt. Empty = default. WARNING: impacts results — expect larger output and less accurate comment locations. Use with caution.", cfg.ReviewPrompt},
+		{"output_theme", "Syntax-highlight theme for CLI output (e.g. github, monokai, github-dark). Options: https://xyproto.github.io/splash/docs/all.html", cfg.OutputTheme},
+		{"backend", "Active backend; must match a key under 'backends'.", cfg.Backend},
+	}
+	for _, e := range entries {
+		if err := add(e.key, e.comment, e.value); err != nil {
+			return nil, err
+		}
+	}
+
+	backendsKey := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Value: "backends",
+		HeadComment: "LLM backends. Each entry accepts:\n" +
+			"  model             - model id (e.g. gpt-4o-mini, gemini-2.0-flash)\n" +
+			"  url               - API endpoint\n" +
+			"  token_env         - env var to read the token from\n" +
+			"  token_cmd         - shell command to obtain the token if env is empty\n" +
+			"  max_prompt_tokens - prompt cap; 0 = auto (~75% of model context)",
+	}
+	backendsVal, err := encodeBackends(cfg.Backends)
+	if err != nil {
+		return nil, err
+	}
+	root.Content = append(root.Content, backendsKey, backendsVal)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(root); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // encodeBackends produces a MappingNode of backends in sorted order, with no
 // per-field comments (documented once on the 'backends' header).
 func encodeBackends(backends map[string]BackendConfig) (*yaml.Node, error) {

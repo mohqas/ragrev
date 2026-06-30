@@ -82,8 +82,8 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 		if err != nil {
 			// In local mode, repo is optional
 			if mode == review.ModeLocal && strings.Contains(err.Error(), "could not detect repo") {
-				// Use a default config with no repo
-				cfg = config.Default()
+				// Use global config as base (falls back to Default if no global file).
+				cfg = config.LoadGlobalOrDefault(globalDir())
 				dir, err = ragrevDir()
 				if err != nil {
 					return fmt.Errorf("could not find .git directory: %w", err)

@@ -141,10 +141,145 @@ func Default() Config {
 // configFileName is the name of the config file inside the ragrev data dir.
 const configFileName = "config.yml"
 
-// Path returns the absolute path to the config file for the current repo.
-// The file lives at .git/ragrev/config.yml.
+// Path returns the absolute path to the config file for the given ragrev dir.
 func Path(ragrevDir string) string {
 	return filepath.Join(ragrevDir, configFileName)
+}
+
+// GlobalPath returns the absolute path to the global config file.
+// The filename is identical to the per-repo one; only the directory differs.
+func GlobalPath(globalDir string) string {
+	return filepath.Join(globalDir, configFileName)
+}
+
+// ApplyGlobal overlays the non-repo-specific fields of global onto base.
+// The fields Repo, BaseBranch, and Reviewers are intentionally skipped
+// because they are inherently per-repository.  All other fields are taken
+// from global, with Backends deep-merged so per-backend user customisations
+// in global are applied without wiping repo-level backend overrides in base.
+func ApplyGlobal(base Config, global Config) Config {
+	base.Authors = global.Authors
+	base.MaxExamples = global.MaxExamples
+	base.MinSimilarityScore = global.MinSimilarityScore
+	base.MinCommentLen = global.MinCommentLen
+	base.RateDelay = global.RateDelay
+	base.Backend = global.Backend
+	base.ReviewScope = global.ReviewScope
+	base.ReviewPrompt = global.ReviewPrompt
+	base.OutputTheme = global.OutputTheme
+
+	// Deep-merge backends: global values fill in missing per-backend fields.
+	if global.Backends != nil {
+		if base.Backends == nil {
+			base.Backends = make(map[string]BackendConfig)
+		}
+		for name, gb := range global.Backends {
+			if existing, ok := base.Backends[name]; !ok {
+				base.Backends[name] = gb
+			} else {
+				if gb.Model != "" {
+					existing.Model = gb.Model
+				}
+				if gb.URL != "" {
+					existing.URL = gb.URL
+				}
+				if gb.TokenEnv != "" {
+					existing.TokenEnv = gb.TokenEnv
+				}
+				if gb.TokenCmd != "" {
+					existing.TokenCmd = gb.TokenCmd
+				}
+				if gb.MaxPromptTokens != 0 {
+					existing.MaxPromptTokens = gb.MaxPromptTokens
+				}
+				base.Backends[name] = existing
+			}
+		}
+	}
+	return base
+}
+
+// SaveGlobal writes the global config file, stripping the repo-specific fields
+// (Repo, BaseBranch, Reviewers) so they are not stored at the global level.
+func SaveGlobal(globalDir string, cfg Config) error {
+	if err := os.MkdirAll(globalDir, 0755); err != nil {
+		return fmt.Errorf("creating global config dir: %w", err)
+	}
+
+	// Zero out repo-specific fields before persisting.
+	cfg.Repo = ""
+	cfg.BaseBranch = ""
+	cfg.Reviewers = nil
+
+	data, err := marshalGlobalWithComments(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling global config: %w", err)
+	}
+
+	p := GlobalPath(globalDir)
+	header := "# ragrev global configuration — edit with: ragrev config --global\n" +
+		"# Values here seed new per-repo configs and supply defaults at runtime.\n" +
+		"# repo, base_branch, and reviewers are omitted (they are per-repo only).\n\n"
+
+	if err := os.WriteFile(p, []byte(header+string(data)), 0644); err != nil {
+		return fmt.Errorf("writing global config: %w", err)
+	}
+	return nil
+}
+
+// EnsureGlobalExists creates the global config file with defaults if it does
+// not yet exist (lazy creation).  Returns the config and its path.
+func EnsureGlobalExists(globalDir string) (Config, string, error) {
+	p := GlobalPath(globalDir)
+	if _, err := os.Stat(p); err == nil {
+		cfg, err := Load(globalDir)
+		return cfg, p, err
+	}
+	cfg := Default()
+	if err := SaveGlobal(globalDir, cfg); err != nil {
+		return cfg, p, err
+	}
+	return cfg, p, nil
+}
+
+// LoadGlobalOrDefault loads the global config from globalDir if the file
+// exists and returns it; otherwise it returns Default().  It never creates
+// any files.
+func LoadGlobalOrDefault(globalDir string) Config {
+	if _, err := os.Stat(GlobalPath(globalDir)); err != nil {
+		return Default()
+	}
+	cfg, err := Load(globalDir)
+	if err != nil {
+		return Default()
+	}
+	return cfg
+}
+
+// EnsureExistsSeeded is like EnsureExists but, when creating the config file
+// for the first time, seeds its non-repo fields from the global config at
+// globalDir (if that file already exists).  Pass an empty globalDir to skip
+// seeding.
+func EnsureExistsSeeded(ragrevDir, globalDir string) (Config, string, error) {
+	p := Path(ragrevDir)
+	if _, err := os.Stat(p); err == nil {
+		cfg, err := Load(ragrevDir)
+		return cfg, p, err
+	}
+
+	cfg := Default()
+	if globalDir != "" {
+		if _, serr := os.Stat(GlobalPath(globalDir)); serr == nil {
+			if gCfg, lerr := Load(globalDir); lerr == nil {
+				cfg = ApplyGlobal(cfg, gCfg)
+			}
+		}
+	}
+
+	if err := Save(ragrevDir, cfg); err != nil {
+		return cfg, p, err
+	}
+	return cfg, p, nil
 }
 
 // Load reads the config from disk. If the file doesn't exist, it returns
@@ -234,17 +369,7 @@ func Save(ragrevDir string, cfg Config) error {
 // EnsureExists creates the config file with defaults if it doesn't exist yet.
 // Returns the config and the path.
 func EnsureExists(ragrevDir string) (Config, string, error) {
-	p := Path(ragrevDir)
-	if _, err := os.Stat(p); err == nil {
-		cfg, err := Load(ragrevDir)
-		return cfg, p, err
-	}
-
-	cfg := Default()
-	if err := Save(ragrevDir, cfg); err != nil {
-		return cfg, p, err
-	}
-	return cfg, p, nil
+	return EnsureExistsSeeded(ragrevDir, "")
 }
 
 // knownTopLevelKeys returns the set of YAML key names defined by the Config
@@ -273,17 +398,21 @@ func knownTopLevelKeys() map[string]struct{} {
 // Returns the merged Config, a (possibly empty) list of human-readable
 // warnings about unrecognised/removed fields, and any hard error.
 func Update(ragrevDir string) (Config, []string, error) {
+	return UpdateSeeded(ragrevDir, "")
+}
+
+// UpdateSeeded is like Update but seeds the config from the global config at
+// globalDir when creating the file for the first time.  Pass an empty
+// globalDir to skip seeding (equivalent to Update).
+func UpdateSeeded(ragrevDir, globalDir string) (Config, []string, error) {
 	p := Path(ragrevDir)
 
 	data, readErr := os.ReadFile(p)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
-			// First run — create with defaults, no warnings.
-			cfg := Default()
-			if err := Save(ragrevDir, cfg); err != nil {
-				return cfg, nil, err
-			}
-			return cfg, nil, nil
+			// First run — seed from global (if present), then save.
+			cfg, _, err := EnsureExistsSeeded(ragrevDir, globalDir)
+			return cfg, nil, err
 		}
 		return Config{}, nil, fmt.Errorf("reading config: %w", readErr)
 	}
@@ -326,7 +455,21 @@ func Edit(ragrevDir string) error {
 	if err != nil {
 		return err
 	}
+	return launchEditor(p)
+}
 
+// EditGlobal opens the global config file in the user's default editor,
+// creating it with defaults on first use.
+func EditGlobal(globalDir string) error {
+	_, p, err := EnsureGlobalExists(globalDir)
+	if err != nil {
+		return err
+	}
+	return launchEditor(p)
+}
+
+// launchEditor opens the file at path p in the user's preferred editor.
+func launchEditor(p string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = os.Getenv("VISUAL")
