@@ -174,6 +174,26 @@ ragrev review 123 --backend.model claude-opus-4-5
 ragrev review 123 --backend.ollama.url http://gpu-box:11434/v1/chat/completions
 ```
 
+**Defining multiple presets of one provider**
+
+Backend keys may use the form `client(alias)` to register several presets that
+share the same client implementation but differ in model, URL, or token. The
+prefix before `(` selects the client (`github`, `copilot`, `gemini`, `ollama`,
+`openrouter`); the alias is free-form. Aliases inherit the base client's `url`
+and token settings, so you usually only need to set `model`:
+
+```yaml
+backend: github(opus)        # active preset
+backends:
+  github(opus):
+    model: claude-opus-4-5
+  github(gemini):
+    model: gemini-2.5-pro
+```
+
+Select a preset at runtime with `--backend "github(opus)"`, and override its
+model on the fly with `--backend.model <value>`.
+
 **Seeding new repos from global**
 
 When a per-repo config is created for the first time (e.g. on the first `ragrev init` or `ragrev review` in a new checkout) its non-repo fields are automatically seeded from the global config — so your preferred `backend`, `output_theme`, `backends`, etc. are already set without any extra action.

@@ -57,7 +57,8 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 		}
 	}
 
-	switch name {
+	client, _ := config.ParseBackendName(name)
+	switch client {
 	case "github", "copilot":
 		// GitHub Models and Copilot use standard OpenAI chat format.
 		if token == "" {
@@ -91,7 +92,8 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), extraHeaders, log), nil
 
 	default:
-		return nil, fmt.Errorf("unknown LLM backend provider: %s", name)
+		return nil, fmt.Errorf("unknown LLM backend client %q (backend %q); valid clients: %s",
+			client, name, strings.Join(config.KnownClients(), ", "))
 	}
 }
 

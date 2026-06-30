@@ -476,3 +476,54 @@ func TestDurationYAML(t *testing.T) {
 		t.Errorf("RateDelay = %v, want 2.5s", time.Duration(loaded.RateDelay))
 	}
 }
+
+func TestParseBackendName(t *testing.T) {
+	cases := []struct {
+		in         string
+		wantClient string
+		wantAlias  string
+	}{
+		{"github", "github", ""},
+		{"github(opus)", "github", "opus"},
+		{"gemini(fast)", "gemini", "fast"},
+		{"(x)", "(x)", ""},       // no client prefix => treated as plain name
+		{"weird(", "weird(", ""}, // unterminated => plain name
+	}
+	for _, c := range cases {
+		client, alias := ParseBackendName(c.in)
+		if client != c.wantClient || alias != c.wantAlias {
+			t.Errorf("ParseBackendName(%q) = (%q, %q), want (%q, %q)",
+				c.in, client, alias, c.wantClient, c.wantAlias)
+		}
+	}
+}
+
+func TestLoadAliasedBackendInheritsDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Default()
+	// Define an aliased github backend that only sets the model.
+	cfg.Backends["github(opus)"] = BackendConfig{Model: "claude-opus-4-5"}
+	cfg.Backend = "github(opus)"
+	if err := Save(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bc, ok := loaded.Backends["github(opus)"]
+	if !ok {
+		t.Fatal("aliased backend github(opus) missing after load")
+	}
+	if bc.Model != "claude-opus-4-5" {
+		t.Errorf("Model = %q, want claude-opus-4-5", bc.Model)
+	}
+	def := Default().Backends["github"]
+	if bc.URL != def.URL {
+		t.Errorf("URL = %q, want inherited %q", bc.URL, def.URL)
+	}
+	if bc.TokenEnv != def.TokenEnv {
+		t.Errorf("TokenEnv = %q, want inherited %q", bc.TokenEnv, def.TokenEnv)
+	}
+}

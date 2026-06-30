@@ -141,6 +141,52 @@ func Default() Config {
 // configFileName is the name of the config file inside the ragrev data dir.
 const configFileName = "config.yml"
 
+// ParseBackendName splits a backend key into its client type and optional
+// alias. Keys may use the form "client(alias)" to define multiple presets
+// that share the same underlying client implementation — for example
+// "github(opus)" and "github(gemini)" both route through the github client
+// but can carry different models. When the key has no parentheses the whole
+// string is the client type and the alias is empty (backwards compatible).
+func ParseBackendName(name string) (client, alias string) {
+	open := strings.IndexByte(name, '(')
+	if open <= 0 || !strings.HasSuffix(name, ")") {
+		return name, ""
+	}
+	return name[:open], name[open+1 : len(name)-1]
+}
+
+// KnownClients returns the sorted list of built-in backend client types.
+// These are the prefixes accepted before the "(alias)" portion of a backend
+// key, and the only clients NewProvider knows how to construct.
+func KnownClients() []string {
+	defs := Default().Backends
+	clients := make([]string, 0, len(defs))
+	for name := range defs {
+		clients = append(clients, name)
+	}
+	sort.Strings(clients)
+	return clients
+}
+
+// mergeBackendDefaults fills any empty field of existing with the value from
+// def, returning the merged result. It never overwrites a field the user has
+// already set.
+func mergeBackendDefaults(existing, def BackendConfig) BackendConfig {
+	if existing.Model == "" {
+		existing.Model = def.Model
+	}
+	if existing.URL == "" {
+		existing.URL = def.URL
+	}
+	if existing.TokenEnv == "" {
+		existing.TokenEnv = def.TokenEnv
+	}
+	if existing.TokenCmd == "" {
+		existing.TokenCmd = def.TokenCmd
+	}
+	return existing
+}
+
 // Path returns the absolute path to the config file for the given ragrev dir.
 func Path(ragrevDir string) string {
 	return filepath.Join(ragrevDir, configFileName)
@@ -311,32 +357,23 @@ func Load(ragrevDir string) (Config, error) {
 	if cfg.Backends == nil {
 		cfg.Backends = make(map[string]BackendConfig)
 	}
+	// Ensure every built-in backend is present and back-fill missing fields.
 	for name, defaultBackend := range defaults.Backends {
 		if existing, ok := cfg.Backends[name]; !ok {
-			// Entire backend is missing, copy default
 			cfg.Backends[name] = defaultBackend
 		} else {
-			// Backend exists, merge missing properties
-			changed := false
-			if existing.Model == "" {
-				existing.Model = defaultBackend.Model
-				changed = true
-			}
-			if existing.URL == "" {
-				existing.URL = defaultBackend.URL
-				changed = true
-			}
-			if existing.TokenEnv == "" {
-				existing.TokenEnv = defaultBackend.TokenEnv
-				changed = true
-			}
-			if existing.TokenCmd == "" {
-				existing.TokenCmd = defaultBackend.TokenCmd
-				changed = true
-			}
-			if changed {
-				cfg.Backends[name] = existing
-			}
+			cfg.Backends[name] = mergeBackendDefaults(existing, defaultBackend)
+		}
+	}
+	// Aliased backends ("client(alias)") inherit their base client's defaults
+	// (url, token settings, and model) for any field the user left blank.
+	for name, existing := range cfg.Backends {
+		client, alias := ParseBackendName(name)
+		if alias == "" {
+			continue
+		}
+		if def, ok := defaults.Backends[client]; ok {
+			cfg.Backends[name] = mergeBackendDefaults(existing, def)
 		}
 	}
 
@@ -438,6 +475,23 @@ func UpdateSeeded(ragrevDir, globalDir string) (Config, []string, error) {
 	cfg, err := Load(ragrevDir)
 	if err != nil {
 		return cfg, warnings, err
+	}
+
+	// Warn about backends whose client prefix is not a recognised client type.
+	knownClients := Default().Backends
+	var badBackends []string
+	for name := range cfg.Backends {
+		client, _ := ParseBackendName(name)
+		if _, ok := knownClients[client]; !ok {
+			badBackends = append(badBackends, name)
+		}
+	}
+	sort.Strings(badBackends)
+	for _, name := range badBackends {
+		client, _ := ParseBackendName(name)
+		warnings = append(warnings, fmt.Sprintf(
+			"backend %q uses unknown client %q; valid clients: %s",
+			name, client, strings.Join(KnownClients(), ", ")))
 	}
 
 	// Re-save so any newly added default fields appear in the file.
