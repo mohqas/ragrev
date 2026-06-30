@@ -35,6 +35,12 @@ apps:
     completer: etc/bash_completion.d/ragrev
     environment:
       TERMINFO: $SNAP/usr/share/terminfo
+      # The bundled vim.basic has a compiled-in runtime path of
+      # /usr/share/vim, which under strict confinement resolves to the base
+      # snap (no vim runtime), causing "E1187: Failed to source defaults.vim".
+      # Point vim at the runtime bundled inside the snap; vim auto-discovers
+      # the versioned vimXX subdir, so no version is hard-coded here.
+      VIM: $SNAP/usr/share/vim
     plugs:
       - home
       - network
@@ -56,13 +62,14 @@ parts:
     plugin: nil
     stage-packages:
       - nano
+      - vim
     override-build: |
       craftctl default
-      # Don't bundle full vim; instead expose the lightweight `vi`/`vim.tiny`
-      # from the base as `vim` so `EDITOR=vim` resolves inside the confined
-      # snap. A symlink to /usr/bin/vi would be an external symlink (rejected
-      # by snapcraft), so use a tiny wrapper script that execs the base's vi
-      # at runtime. $SNAP/usr/bin is earlier on PATH so this wins.
+      # Bundle a full `vim` so `EDITOR=vim` works for users who find the
+      # base's lightweight `vi` difficult. The vim package installs the editor
+      # as `vim.basic` selected via update-alternatives; that alternatives
+      # symlink doesn't survive staging, so create a stable `vim` symlink
+      # pointing at the bundled binary. $SNAP/usr/bin is earlier on PATH so
+      # this wins over the base's vi.
       mkdir -p "$CRAFT_PART_INSTALL/usr/bin"
-      printf '#!/bin/sh\nexec /usr/bin/vi "$@"\n' > "$CRAFT_PART_INSTALL/usr/bin/vim"
-      chmod +x "$CRAFT_PART_INSTALL/usr/bin/vim"
+      ln -sf vim.basic "$CRAFT_PART_INSTALL/usr/bin/vim"
