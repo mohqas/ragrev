@@ -99,7 +99,13 @@ func Run(ctx context.Context, params Params, log *logger.Logger) error {
 
 	backendCfg, ok := cfg.Backends[backendName]
 	if !ok {
-		return fmt.Errorf("backend %q not found in config", backendName)
+		available := make([]string, 0, len(cfg.Backends))
+		for name := range cfg.Backends {
+			available = append(available, name)
+		}
+		sort.Strings(available)
+		return fmt.Errorf("backend %q not found in config; available backends: %s",
+			backendName, strings.Join(available, ", "))
 	}
 
 	provider, err := llm.NewProvider(backendName, backendCfg, log)

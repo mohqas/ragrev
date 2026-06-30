@@ -484,10 +484,10 @@ func TestParseBackendName(t *testing.T) {
 		wantAlias  string
 	}{
 		{"github", "github", ""},
-		{"github(opus)", "github", "opus"},
-		{"gemini(fast)", "gemini", "fast"},
-		{"(x)", "(x)", ""},       // no client prefix => treated as plain name
-		{"weird(", "weird(", ""}, // unterminated => plain name
+		{"copilot-opus", "copilot", "opus"},
+		{"gemini-fast", "gemini", "fast"},
+		{"github-gpt-4o", "github", "gpt-4o"}, // alias keeps inner dashes
+		{"-x", "-x", ""},                      // leading dash => plain name
 	}
 	for _, c := range cases {
 		client, alias := ParseBackendName(c.in)
@@ -502,8 +502,8 @@ func TestLoadAliasedBackendInheritsDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Default()
 	// Define an aliased github backend that only sets the model.
-	cfg.Backends["github(opus)"] = BackendConfig{Model: "claude-opus-4-5"}
-	cfg.Backend = "github(opus)"
+	cfg.Backends["github-opus"] = BackendConfig{Model: "claude-opus-4-5"}
+	cfg.Backend = "github-opus"
 	if err := Save(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -512,9 +512,9 @@ func TestLoadAliasedBackendInheritsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc, ok := loaded.Backends["github(opus)"]
+	bc, ok := loaded.Backends["github-opus"]
 	if !ok {
-		t.Fatal("aliased backend github(opus) missing after load")
+		t.Fatal("aliased backend github-opus missing after load")
 	}
 	if bc.Model != "claude-opus-4-5" {
 		t.Errorf("Model = %q, want claude-opus-4-5", bc.Model)

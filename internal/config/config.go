@@ -142,21 +142,22 @@ func Default() Config {
 const configFileName = "config.yml"
 
 // ParseBackendName splits a backend key into its client type and optional
-// alias. Keys may use the form "client(alias)" to define multiple presets
+// alias. Keys may use the form "client-alias" to define multiple presets
 // that share the same underlying client implementation — for example
-// "github(opus)" and "github(gemini)" both route through the github client
-// but can carry different models. When the key has no parentheses the whole
-// string is the client type and the alias is empty (backwards compatible).
+// "copilot-opus" and "copilot-gemini" both route through the copilot client
+// but can carry different models. The split happens at the first dash, so the
+// alias itself may contain dashes (e.g. "github-gpt-4o"). When the key has no
+// dash the whole string is the client type and the alias is empty (backwards
+// compatible; the built-in client names contain no dashes).
 func ParseBackendName(name string) (client, alias string) {
-	open := strings.IndexByte(name, '(')
-	if open <= 0 || !strings.HasSuffix(name, ")") {
-		return name, ""
+	if i := strings.IndexByte(name, '-'); i > 0 {
+		return name[:i], name[i+1:]
 	}
-	return name[:open], name[open+1 : len(name)-1]
+	return name, ""
 }
 
 // KnownClients returns the sorted list of built-in backend client types.
-// These are the prefixes accepted before the "(alias)" portion of a backend
+// These are the prefixes accepted before the "-alias" portion of a backend
 // key, and the only clients NewProvider knows how to construct.
 func KnownClients() []string {
 	defs := Default().Backends
@@ -365,7 +366,7 @@ func Load(ragrevDir string) (Config, error) {
 			cfg.Backends[name] = mergeBackendDefaults(existing, defaultBackend)
 		}
 	}
-	// Aliased backends ("client(alias)") inherit their base client's defaults
+	// Aliased backends ("client-alias") inherit their base client's defaults
 	// (url, token settings, and model) for any field the user left blank.
 	for name, existing := range cfg.Backends {
 		client, alias := ParseBackendName(name)

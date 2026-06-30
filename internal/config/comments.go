@@ -50,8 +50,8 @@ func marshalWithComments(cfg Config) ([]byte, error) {
 	backendsKey := &yaml.Node{
 		Kind:  yaml.ScalarNode,
 		Value: "backends",
-		HeadComment: "LLM backends. Keys are 'client' or 'client(alias)' so you can define\n" +
-			"multiple presets sharing one client (e.g. github(opus), github(gemini)).\n" +
+		HeadComment: "LLM backends. Keys are 'client' or 'client-alias' so you can define\n" +
+			"multiple presets sharing one client (e.g. copilot-opus, copilot-gemini).\n" +
 			"Valid clients: copilot, gemini, github, ollama, openrouter.\n" +
 			"Each entry accepts:\n" +
 			"  model             - model id (e.g. gpt-4o-mini, gemini-2.0-flash)\n" +
@@ -117,8 +117,8 @@ func marshalGlobalWithComments(cfg Config) ([]byte, error) {
 	backendsKey := &yaml.Node{
 		Kind:  yaml.ScalarNode,
 		Value: "backends",
-		HeadComment: "LLM backends. Keys are 'client' or 'client(alias)' so you can define\n" +
-			"multiple presets sharing one client (e.g. github(opus), github(gemini)).\n" +
+		HeadComment: "LLM backends. Keys are 'client' or 'client-alias' so you can define\n" +
+			"multiple presets sharing one client (e.g. copilot-opus, copilot-gemini).\n" +
 			"Valid clients: copilot, gemini, github, ollama, openrouter.\n" +
 			"Each entry accepts:\n" +
 			"  model             - model id (e.g. gpt-4o-mini, gemini-2.0-flash)\n" +

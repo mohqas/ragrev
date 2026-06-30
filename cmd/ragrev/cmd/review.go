@@ -245,11 +245,13 @@ func applyBackendFlags(cmd *cobra.Command, cfg *config.Config) {
 	// Shortcut flags: --backend.<field> — applied to whichever backend is selected.
 	selected := cfg.Backend
 	bc := cfg.Backends[selected]
+	shortcutChanged := false
 	for _, f := range backendFields {
 		flagName := "backend." + f.suffix
 		if !cmd.Flags().Changed(flagName) {
 			continue
 		}
+		shortcutChanged = true
 		if f.isInt {
 			v, _ := cmd.Flags().GetInt(flagName)
 			bc.MaxPromptTokens = v
@@ -267,7 +269,13 @@ func applyBackendFlags(cmd *cobra.Command, cfg *config.Config) {
 			}
 		}
 	}
-	cfg.Backends[selected] = bc
+	// Only write the entry back when a shortcut flag actually changed something.
+	// Otherwise we'd materialise an empty BackendConfig for a backend name that
+	// doesn't exist in the config (e.g. a typo'd --backend value), masking the
+	// "backend not found" error with a confusing token-resolution failure.
+	if shortcutChanged {
+		cfg.Backends[selected] = bc
+	}
 }
 
 func init() {

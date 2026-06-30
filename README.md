@@ -176,23 +176,24 @@ ragrev review 123 --backend.ollama.url http://gpu-box:11434/v1/chat/completions
 
 **Defining multiple presets of one provider**
 
-Backend keys may use the form `client(alias)` to register several presets that
+Backend keys may use the form `client-alias` to register several presets that
 share the same client implementation but differ in model, URL, or token. The
-prefix before `(` selects the client (`github`, `copilot`, `gemini`, `ollama`,
-`openrouter`); the alias is free-form. Aliases inherit the base client's `url`
-and token settings, so you usually only need to set `model`:
+prefix before the first `-` selects the client (`github`, `copilot`, `gemini`,
+`ollama`, `openrouter`); the alias is free-form and may itself contain dashes.
+Aliases inherit the base client's `url` and token settings, so you usually only
+need to set `model`:
 
 ```yaml
-backend: github(opus)        # active preset
+backend: copilot-opus        # active preset
 backends:
-  github(opus):
+  copilot-opus:
     model: claude-opus-4-5
-  github(gemini):
+  copilot-gemini:
     model: gemini-2.5-pro
 ```
 
-Select a preset at runtime with `--backend "github(opus)"`, and override its
-model on the fly with `--backend.model <value>`.
+Select a preset at runtime with `--backend copilot-opus` (no quoting needed),
+and override its model on the fly with `--backend.model <value>`.
 
 **Seeding new repos from global**
 
