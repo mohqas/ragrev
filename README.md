@@ -100,6 +100,12 @@ To submit the findings directly to GitHub as a pending review:
 ragrev review 123 --submit
 ```
 
+To refresh the vector DB with new PR comments before running the review (defaults to off), use `--update-index`. This runs the `init` indexing pipeline first, incrementally appending any new comments, then reviews against the up-to-date index:
+
+```bash
+ragrev review 123 --update-index
+```
+
 ### 4. Configuration
 
 Customize your backend, repo settings, and default reviewers:

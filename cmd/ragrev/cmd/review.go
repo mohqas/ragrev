@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/canonical/ragrev/internal/config"
+	"github.com/canonical/ragrev/internal/generate"
 	"github.com/canonical/ragrev/internal/gitutil"
 	"github.com/canonical/ragrev/internal/logger"
 	"github.com/canonical/ragrev/internal/output"
@@ -133,6 +134,29 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 		plainFlag, _ := cmd.Flags().GetBool("plain")
 		printer := output.New(os.Stdout, cfg.OutputTheme, plainFlag)
 
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		debug, _ := cmd.Flags().GetBool("debug")
+		log := logger.New(os.Stdout, verbose, debug)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+
+		// Optionally refresh the vector DB with new PR comments before reviewing.
+		if updateIndex, _ := cmd.Flags().GetBool("update-index"); updateIndex {
+			if cfg.Repo == "" {
+				return fmt.Errorf("--update-index requires a repo; set it in config or use --repo")
+			}
+			log.Print("Updating review index before review...\n")
+			genParams := generate.Params{
+				DBPath:         dbPath,
+				CollectionName: collection,
+				Config:         cfg,
+			}
+			if err := generate.Run(ctx, genParams, log); err != nil {
+				return fmt.Errorf("updating review index: %w", err)
+			}
+		}
+
 		params := review.Params{
 			DBPath:             dbPath,
 			CollectionName:     collection,
@@ -145,13 +169,6 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 			Scope:              review.ScopeMode(scopeFlag),
 			Printer:            printer,
 		}
-
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		debug, _ := cmd.Flags().GetBool("debug")
-		log := logger.New(os.Stdout, verbose, debug)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
 
 		return review.Run(ctx, params, log)
 	},
@@ -167,6 +184,7 @@ func init() {
 	reviewCmd.Flags().Bool("use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	reviewCmd.Flags().String("backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
 	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub (PR mode only)")
+	reviewCmd.Flags().Bool("update-index", false, "Update the vector DB with new PR comments before running the review")
 	reviewCmd.Flags().String("scope", "", "Review context scope: pr (default, preload entire PR), file (preload one file at a time), or chunk (only the chunk + its file per call)")
 	reviewCmd.Flags().String("prompt", "", "Override the built-in review system prompt (override config). WARNING: impacts results — larger output and less accurate comment locations")
 	reviewCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
