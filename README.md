@@ -145,6 +145,35 @@ ragrev config
 CLI flags  >  per-repo .git/ragrev/config.yml  >  global config.yml  >  built-in defaults
 ```
 
+**Overriding backend settings via flags**
+
+Every field of a backend's config can be overridden at runtime without editing any file.
+
+| Pattern | Effect |
+| :--- | :--- |
+| `--backend <name>` | Select a backend. |
+| `--backend.model <value>` | Override the model for the **selected** backend. |
+| `--backend.url <value>` | Override the API endpoint URL for the selected backend. |
+| `--backend.token-env <value>` | Override the token environment variable for the selected backend. |
+| `--backend.token-cmd <value>` | Override the token command for the selected backend. |
+| `--backend.max-prompt-tokens <n>` | Override the max prompt token limit for the selected backend. |
+| `--backend.<name>.model <value>` | Override the model for a **specific** backend (also selects it). |
+| `--backend.<name>.url <value>` | Override the URL for a specific backend (also selects it). |
+| *(same pattern for `token-env`, `token-cmd`, `max-prompt-tokens`)* | |
+
+Examples:
+
+```bash
+# Use the gemini backend with a different model
+ragrev review 123 --backend.gemini.model gemini-2.5-pro
+
+# Use whichever backend is configured, but swap the model
+ragrev review 123 --backend.model claude-opus-4-5
+
+# Point ollama at a non-default URL and select it
+ragrev review 123 --backend.ollama.url http://gpu-box:11434/v1/chat/completions
+```
+
 **Seeding new repos from global**
 
 When a per-repo config is created for the first time (e.g. on the first `ragrev init` or `ragrev review` in a new checkout) its non-repo fields are automatically seeded from the global config — so your preferred `backend`, `output_theme`, `backends`, etc. are already set without any extra action.

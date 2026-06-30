@@ -107,6 +107,7 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 		if backend, _ := cmd.Flags().GetString("backend"); backend != "" {
 			cfg.Backend = backend
 		}
+		applyBackendFlags(cmd, &cfg)
 
 		// Resolve DB path and collection
 		dbPath, _ := cmd.Flags().GetString("db-path")
@@ -174,6 +175,101 @@ If comma-separated SHAs are provided, reviews those specific commits.`,
 	},
 }
 
+// knownBackends is the list of backend names that have per-backend flag shortcuts.
+var knownBackends = []string{"github", "copilot", "gemini", "ollama", "openrouter"}
+
+// backendFields describes every BackendConfig field that can be overridden via
+// a flag, together with the flag suffix and a short description.
+var backendFields = []struct {
+	suffix string
+	desc   string
+	isInt  bool
+}{
+	{"model", "model name", false},
+	{"url", "API endpoint URL", false},
+	{"token-env", "environment variable holding the API token", false},
+	{"token-cmd", "shell command whose stdout is used as the API token", false},
+	{"max-prompt-tokens", "maximum prompt size in tokens (0 = per-model default)", true},
+}
+
+// applyBackendFlags applies all --backend.* and --backend.<name>.* flags to cfg.
+// Per-backend flags also implicitly select that backend unless --backend was
+// already given explicitly.
+func applyBackendFlags(cmd *cobra.Command, cfg *config.Config) {
+	if cfg.Backends == nil {
+		cfg.Backends = make(map[string]config.BackendConfig)
+	}
+
+	backendFlagChanged := cmd.Flags().Changed("backend")
+
+	// Per-backend flags: --backend.<name>.<field>
+	// Selecting a specific backend via one of these also implicitly activates it.
+	for _, name := range knownBackends {
+		bc := cfg.Backends[name]
+		changed := false
+
+		for _, f := range backendFields {
+			flagName := "backend." + name + "." + f.suffix
+			if !cmd.Flags().Changed(flagName) {
+				continue
+			}
+			changed = true
+			if f.isInt {
+				v, _ := cmd.Flags().GetInt(flagName)
+				bc.MaxPromptTokens = v
+			} else {
+				v, _ := cmd.Flags().GetString(flagName)
+				switch f.suffix {
+				case "model":
+					bc.Model = v
+				case "url":
+					bc.URL = v
+				case "token-env":
+					bc.TokenEnv = v
+				case "token-cmd":
+					bc.TokenCmd = v
+				}
+			}
+		}
+
+		if changed {
+			cfg.Backends[name] = bc
+			// Implicitly select this backend if --backend wasn't set explicitly.
+			if !backendFlagChanged {
+				cfg.Backend = name
+				backendFlagChanged = true // first match wins
+			}
+		}
+	}
+
+	// Shortcut flags: --backend.<field> — applied to whichever backend is selected.
+	selected := cfg.Backend
+	bc := cfg.Backends[selected]
+	for _, f := range backendFields {
+		flagName := "backend." + f.suffix
+		if !cmd.Flags().Changed(flagName) {
+			continue
+		}
+		if f.isInt {
+			v, _ := cmd.Flags().GetInt(flagName)
+			bc.MaxPromptTokens = v
+		} else {
+			v, _ := cmd.Flags().GetString(flagName)
+			switch f.suffix {
+			case "model":
+				bc.Model = v
+			case "url":
+				bc.URL = v
+			case "token-env":
+				bc.TokenEnv = v
+			case "token-cmd":
+				bc.TokenCmd = v
+			}
+		}
+	}
+	cfg.Backends[selected] = bc
+}
+
 func init() {
 	rootCmd.AddCommand(reviewCmd)
 
@@ -183,6 +279,28 @@ func init() {
 	reviewCmd.Flags().String("reviewers", "", "Comma-separated reviewer usernames to base the review on (override config)")
 	reviewCmd.Flags().Bool("use-agents-instructions", true, "Include instructions from AGENTS.md if it exists in the repo root")
 	reviewCmd.Flags().String("backend", "", "LLM backend to use (e.g. github, gemini, ollama) (override config)")
+
+	// Shortcut flags for the selected backend.
+	// Use --backend.<name>.<field> variants to target a specific backend (also selects it).
+	// Available fields: model, url, token-env, token-cmd, max-prompt-tokens.
+	reviewCmd.Flags().String("backend.model", "", "Override `model` for the selected backend; use --backend.<name>.model to target a specific one")
+	reviewCmd.Flags().String("backend.url", "", "Override API endpoint URL for the selected backend")
+	reviewCmd.Flags().String("backend.token-env", "", "Override token env-var for the selected backend")
+	reviewCmd.Flags().String("backend.token-cmd", "", "Override token command for the selected backend")
+	reviewCmd.Flags().Int("backend.max-prompt-tokens", 0, "Override max prompt tokens for the selected backend")
+	// Per-backend flags: --backend.<name>.<field> — hidden to keep help concise.
+	for _, name := range knownBackends {
+		for _, f := range backendFields {
+			flagName := "backend." + name + "." + f.suffix
+			if f.isInt {
+				reviewCmd.Flags().Int(flagName, 0, "")
+			} else {
+				reviewCmd.Flags().String(flagName, "", "")
+			}
+			_ = reviewCmd.Flags().MarkHidden(flagName)
+		}
+	}
+
 	reviewCmd.Flags().Bool("submit", false, "Submit the review findings as a pending PR review on GitHub (PR mode only)")
 	reviewCmd.Flags().Bool("update-index", false, "Update the vector DB with new PR comments before running the review")
 	reviewCmd.Flags().String("scope", "", "Review context scope: pr (default, preload entire PR), file (preload one file at a time), or chunk (only the chunk + its file per call)")
