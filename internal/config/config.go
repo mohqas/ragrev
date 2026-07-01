@@ -98,7 +98,7 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 // Default returns a Config with sensible defaults.
 func Default() Config {
 	return Config{
-		BaseBranch:         "master",
+		BaseBranch:         "",
 		MinCommentLen:      10,
 		MaxExamples:        2,
 		MinSimilarityScore: 0.5,
@@ -140,6 +140,35 @@ func Default() Config {
 
 // configFileName is the name of the config file inside the ragrev data dir.
 const configFileName = "config.yml"
+
+// DefaultBaseBranch is the safe fallback target branch used when the
+// repository's default branch cannot be detected from the local git remote
+// or the GitHub API.
+const DefaultBaseBranch = "master"
+
+// BaseBranchDetector, when non-nil, is invoked while creating a new per-repo
+// config to auto-detect the repository's default branch (e.g. from the local
+// git remote). The CLI wires this to gitutil.DetectBaseBranch so the config
+// package stays free of any git dependency. A nil hook or a detection error
+// results in the DefaultBaseBranch fallback being stored instead.
+var BaseBranchDetector func() (string, error)
+
+// resolveBaseBranch fills in cfg.BaseBranch when it is blank. Detection runs
+// once — at per-repo config creation time — so every later read simply uses
+// the value persisted in the config file. The BaseBranchDetector hook is
+// tried first, then DefaultBaseBranch as a safe fallback.
+func resolveBaseBranch(cfg *Config) {
+	if cfg.BaseBranch != "" {
+		return
+	}
+	if BaseBranchDetector != nil {
+		if branch, err := BaseBranchDetector(); err == nil && branch != "" {
+			cfg.BaseBranch = branch
+			return
+		}
+	}
+	cfg.BaseBranch = DefaultBaseBranch
+}
 
 // ParseBackendName splits a backend key into its client type and optional
 // alias. Keys may use the form "client-alias" to define multiple presets
@@ -322,6 +351,11 @@ func EnsureExistsSeeded(ragrevDir, globalDir string) (Config, string, error) {
 			}
 		}
 	}
+
+	// The base branch is per-repo and never stored globally, so detect it now
+	// (once, at creation) and bake it into the file. All later reads use the
+	// stored value directly.
+	resolveBaseBranch(&cfg)
 
 	if err := Save(ragrevDir, cfg); err != nil {
 		return cfg, p, err

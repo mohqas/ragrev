@@ -10,8 +10,8 @@ import (
 
 func TestDefault(t *testing.T) {
 	cfg := Default()
-	if cfg.BaseBranch != "master" {
-		t.Errorf("BaseBranch = %q, want master", cfg.BaseBranch)
+	if cfg.BaseBranch != "" {
+		t.Errorf("BaseBranch = %q, want empty (auto-detected at load time)", cfg.BaseBranch)
 	}
 	if cfg.MinCommentLen != 10 {
 		t.Errorf("MinCommentLen = %d, want 10", cfg.MinCommentLen)
@@ -92,8 +92,8 @@ func TestLoadMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load missing file should return defaults, got error: %v", err)
 	}
-	if cfg.BaseBranch != "master" {
-		t.Errorf("missing file should return default BaseBranch=master, got %q", cfg.BaseBranch)
+	if cfg.BaseBranch != "" {
+		t.Errorf("missing file should return default empty BaseBranch, got %q", cfg.BaseBranch)
 	}
 }
 
@@ -104,8 +104,9 @@ func TestEnsureExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureExists: %v", err)
 	}
+	// With no detector wired, creation bakes in the DefaultBaseBranch fallback.
 	if cfg.BaseBranch != "master" {
-		t.Errorf("BaseBranch = %q, want master", cfg.BaseBranch)
+		t.Errorf("BaseBranch = %q, want master (fallback)", cfg.BaseBranch)
 	}
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("config file not created at %s", p)
@@ -131,8 +132,10 @@ func TestUpdateNewFile(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings for new file, got %v", warnings)
 	}
+	// Update creates the file on first run, baking in the base branch. With no
+	// detector wired in tests, the DefaultBaseBranch fallback is stored.
 	if cfg.BaseBranch != "master" {
-		t.Errorf("BaseBranch = %q, want master", cfg.BaseBranch)
+		t.Errorf("BaseBranch = %q, want master (fallback)", cfg.BaseBranch)
 	}
 	if _, err := os.Stat(Path(dir)); err != nil {
 		t.Errorf("config file not created: %v", err)
@@ -385,7 +388,7 @@ func TestApplyGlobal(t *testing.T) {
 	if result.Repo != "" {
 		t.Errorf("ApplyGlobal should not copy Repo, got %q", result.Repo)
 	}
-	if result.BaseBranch != "master" {
+	if result.BaseBranch != "" {
 		t.Errorf("ApplyGlobal should not copy BaseBranch from global, got %q", result.BaseBranch)
 	}
 	if len(result.Reviewers) != 0 {
@@ -420,6 +423,48 @@ func TestEnsureExistsSeeded(t *testing.T) {
 	}
 	if cfg2.Backend != "ollama" {
 		t.Errorf("Backend = %q on second call, want ollama", cfg2.Backend)
+	}
+}
+
+func TestBaseBranchDetectorOnCreate(t *testing.T) {
+	// The detector runs once, at creation, and its result is baked into the
+	// per-repo config file.
+	orig := BaseBranchDetector
+	t.Cleanup(func() { BaseBranchDetector = orig })
+	BaseBranchDetector = func() (string, error) { return "develop", nil }
+
+	dir := t.TempDir()
+	cfg, _, err := EnsureExists(dir)
+	if err != nil {
+		t.Fatalf("EnsureExists: %v", err)
+	}
+	if cfg.BaseBranch != "develop" {
+		t.Errorf("BaseBranch = %q, want develop (from detector)", cfg.BaseBranch)
+	}
+
+	// Reload from disk to confirm it was persisted, not just returned.
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.BaseBranch != "develop" {
+		t.Errorf("persisted BaseBranch = %q, want develop", loaded.BaseBranch)
+	}
+}
+
+func TestBaseBranchDetectorFallback(t *testing.T) {
+	// A failing detector falls back to DefaultBaseBranch.
+	orig := BaseBranchDetector
+	t.Cleanup(func() { BaseBranchDetector = orig })
+	BaseBranchDetector = func() (string, error) { return "", os.ErrNotExist }
+
+	dir := t.TempDir()
+	cfg, _, err := EnsureExists(dir)
+	if err != nil {
+		t.Fatalf("EnsureExists: %v", err)
+	}
+	if cfg.BaseBranch != DefaultBaseBranch {
+		t.Errorf("BaseBranch = %q, want fallback %q", cfg.BaseBranch, DefaultBaseBranch)
 	}
 }
 

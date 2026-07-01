@@ -7,6 +7,13 @@ import (
 	"github.com/canonical/ragrev/internal/gitutil"
 )
 
+// init wires the config package's base-branch detector to the local git
+// remote lookup. Detection then happens once, when a per-repo config is first
+// created, and the resolved branch is persisted into the config file.
+func init() {
+	config.BaseBranchDetector = gitutil.DetectBaseBranch
+}
+
 // ragrevDir returns the .git/ragrev path, used for both config and DB storage.
 func ragrevDir() (string, error) {
 	return gitutil.DBPath()

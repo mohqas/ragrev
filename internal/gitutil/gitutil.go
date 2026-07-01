@@ -70,6 +70,30 @@ func DetectRepo() (string, error) {
 	return m[1], nil
 }
 
+// DetectBaseBranch returns the default branch of the "origin" remote, detected
+// from the local symbolic ref refs/remotes/origin/HEAD (set by `git clone`).
+// It returns an error when the repo, remote, or symbolic ref is unavailable so
+// callers can fall back to a configured or hard-coded default.
+func DetectBaseBranch() (string, error) {
+	repo, err := openRepo()
+	if err != nil {
+		return "", fmt.Errorf("not a git repo: %w", err)
+	}
+	ref, err := repo.Reference(plumbing.ReferenceName("refs/remotes/origin/HEAD"), false)
+	if err != nil {
+		return "", fmt.Errorf("origin/HEAD not set: %w", err)
+	}
+	if ref.Type() != plumbing.SymbolicReference {
+		return "", fmt.Errorf("origin/HEAD is not a symbolic ref")
+	}
+	// Target is e.g. refs/remotes/origin/main; Short() yields "origin/main".
+	branch := strings.TrimPrefix(ref.Target().Short(), "origin/")
+	if branch == "" {
+		return "", fmt.Errorf("could not parse default branch from %q", ref.Target())
+	}
+	return branch, nil
+}
+
 // RepoBaseName returns the repo name (without owner) from an "owner/repo" string.
 func RepoBaseName(nameWithOwner string) string {
 	parts := strings.SplitN(nameWithOwner, "/", 2)

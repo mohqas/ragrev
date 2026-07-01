@@ -1,6 +1,7 @@
 package gitutil
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,21 @@ func TestDetectRepo(t *testing.T) {
 	// Should be in owner/repo format
 	if len(repo) < 3 {
 		t.Errorf("DetectRepo returned suspiciously short: %q", repo)
+	}
+}
+
+func TestDetectBaseBranch(t *testing.T) {
+	// Only works inside a git repo whose origin/HEAD symbolic ref is set.
+	// Skip gracefully otherwise (e.g. shallow CI checkouts).
+	branch, err := DetectBaseBranch()
+	if err != nil {
+		t.Skipf("skipping: %v", err)
+	}
+	if branch == "" {
+		t.Error("DetectBaseBranch returned empty string with no error")
+	}
+	if strings.HasPrefix(branch, "origin/") {
+		t.Errorf("DetectBaseBranch should strip the remote prefix, got %q", branch)
 	}
 }
 
