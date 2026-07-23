@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/ragrev/internal/logger"
 	gh "github.com/google/go-github/v72/github"
+	"github.com/mohqas/ragrev/internal/logger"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
 )

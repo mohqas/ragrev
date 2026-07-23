@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/canonical/ragrev/internal/llm"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/llm"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 func quietLogger() *logger.Logger {

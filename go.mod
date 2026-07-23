@@ -1,4 +1,4 @@
-module github.com/canonical/ragrev
+module github.com/mohqas/ragrev
 
 go 1.26.2
 

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/ragrev/internal/config"
-	ghclient "github.com/canonical/ragrev/internal/github"
-	"github.com/canonical/ragrev/internal/logger"
-	"github.com/canonical/ragrev/internal/vectordb"
+	"github.com/mohqas/ragrev/internal/config"
+	ghclient "github.com/mohqas/ragrev/internal/github"
+	"github.com/mohqas/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/vectordb"
 )
 
 // Params holds the resolved parameters for the generate command.

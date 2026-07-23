@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/canonical/ragrev/internal/vectorizer"
+	"github.com/mohqas/ragrev/internal/vectorizer"
 	chromem "github.com/philippgille/chromem-go"
 )
 

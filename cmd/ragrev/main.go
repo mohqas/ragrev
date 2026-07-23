@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/canonical/ragrev/cmd/ragrev/cmd"
+	"github.com/mohqas/ragrev/cmd/ragrev/cmd"
 )
 
 func main() {

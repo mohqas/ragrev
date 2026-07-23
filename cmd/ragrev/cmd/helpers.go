@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/canonical/ragrev/internal/config"
-	"github.com/canonical/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/gitutil"
 )
 
 // init wires the config package's base-branch detector to the local git

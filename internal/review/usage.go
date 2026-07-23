@@ -3,8 +3,8 @@ package review
 import (
 	"fmt"
 
-	"github.com/canonical/ragrev/internal/llm"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/llm"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 // usageStats aggregates token consumption across all LLM calls during a review.

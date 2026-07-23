@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/canonical/ragrev/internal/llm"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/llm"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 // ScopeMode controls how much PR context is loaded into the LLM conversation.

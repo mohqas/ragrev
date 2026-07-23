@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/canonical/ragrev/internal/config"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 // Message is the universal minimum block needed to communicate with an LLM.
@@ -86,7 +86,7 @@ func NewProvider(name string, backendCfg config.BackendConfig, log *logger.Logge
 			return nil, fmt.Errorf("token resolution failed: neither %s nor %q returned a token", backendCfg.TokenEnv, backendCfg.TokenCmd)
 		}
 		extraHeaders := map[string]string{
-			"HTTP-Referer": "https://github.com/canonical/ragrev",
+			"HTTP-Referer": "https://github.com/mohqas/ragrev",
 			"X-Title":      "ragrev",
 		}
 		return newOpenAIClient(backendCfg.URL, backendCfg.Model, token, resolveBudget(backendCfg), extraHeaders, log), nil

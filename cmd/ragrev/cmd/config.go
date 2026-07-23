@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/canonical/ragrev/internal/config"
-	"github.com/canonical/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/gitutil"
 	"github.com/spf13/cobra"
 )
 

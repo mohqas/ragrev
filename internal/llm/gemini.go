@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 type geminiPart struct {

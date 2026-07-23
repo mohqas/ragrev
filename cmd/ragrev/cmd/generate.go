@@ -4,10 +4,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/canonical/ragrev/internal/config"
-	"github.com/canonical/ragrev/internal/generate"
-	"github.com/canonical/ragrev/internal/gitutil"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/generate"
+	"github.com/mohqas/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/logger"
 	"github.com/spf13/cobra"
 )
 

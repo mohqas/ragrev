@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/ragrev/internal/config"
-	ghclient "github.com/canonical/ragrev/internal/github"
-	"github.com/canonical/ragrev/internal/gitutil"
-	"github.com/canonical/ragrev/internal/llm"
-	"github.com/canonical/ragrev/internal/logger"
-	"github.com/canonical/ragrev/internal/output"
-	"github.com/canonical/ragrev/internal/parser"
-	"github.com/canonical/ragrev/internal/vectordb"
 	gh "github.com/google/go-github/v72/github"
+	"github.com/mohqas/ragrev/internal/config"
+	ghclient "github.com/mohqas/ragrev/internal/github"
+	"github.com/mohqas/ragrev/internal/gitutil"
+	"github.com/mohqas/ragrev/internal/llm"
+	"github.com/mohqas/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/output"
+	"github.com/mohqas/ragrev/internal/parser"
+	"github.com/mohqas/ragrev/internal/vectordb"
 )
 
 // ReviewMode determines whether to review a PR or local commits.

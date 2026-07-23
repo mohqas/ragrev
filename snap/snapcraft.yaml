@@ -21,10 +21,10 @@ description: |
   GEMINI_API_KEY) in your environment before running ragrev.
 
 license: GPL-3.0
-website: https://github.com/canonical/ragrev
-source-code: https://github.com/canonical/ragrev
-issues: https://github.com/canonical/ragrev/issues
-contact: https://github.com/canonical/ragrev/issues
+website: https://github.com/mohqas/ragrev
+source-code: https://github.com/mohqas/ragrev
+issues: https://github.com/mohqas/ragrev/issues
+contact: https://github.com/mohqas/ragrev/issues
 
 grade: stable
 confinement: strict

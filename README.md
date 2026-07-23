@@ -65,7 +65,7 @@ export OPENROUTER_API_KEY=...      # OpenRouter backend
 
 #### Option B: Go Install
 ```bash
-go install github.com/canonical/ragrev/cmd/ragrev@latest
+go install github.com/mohqas/ragrev/cmd/ragrev@latest
 ```
 
 

@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/canonical/ragrev/internal/config"
-	"github.com/canonical/ragrev/internal/logger"
+	"github.com/mohqas/ragrev/internal/config"
+	"github.com/mohqas/ragrev/internal/logger"
 )
 
 func testLogger() *logger.Logger {
